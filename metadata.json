@@ -1,0 +1,8 @@
+{
+  "name": "Remix ATHENA",
+  "description": "ECHO-INTERFACE chronicle, 42.6 Hz network node explorer, frequency synthesizer, power calculator, and offline field workspace. Movie Maker Comic book illustrator animated video maker.. app builder multimedia create workspace with access to google services within the app ",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
