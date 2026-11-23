@@ -1029,7 +1029,7 @@ fun AthenaApkBuilderView(
                                 Button(
                                     onClick = { showDeployDialog = true },
                                     modifier = Modifier.weight(1.3f).height(42.dp).testTag("deploy_device_testing_button"),
-                                    colors = ButtonDefaults.buttonColors(containerColor = EchoCyan, contentColor = Color.Black),
+                                    colors = ButtonDefaults.buttonColors(containerColor = EchoCyan, contentColor = EchoOnCyan),
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
                                     Text("🚀", fontSize = 14.sp)
@@ -1056,7 +1056,7 @@ fun AthenaApkBuilderView(
                                         }
                                     },
                                     modifier = Modifier.weight(1.2f).height(40.dp).testTag("convert_html_button"),
-                                    colors = ButtonDefaults.buttonColors(containerColor = EchoCyan, contentColor = Color.Black),
+                                    colors = ButtonDefaults.buttonColors(containerColor = EchoCyan, contentColor = EchoOnCyan),
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
                                     Icon(Icons.Default.Language, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -1152,7 +1152,7 @@ fun AthenaApkBuilderView(
                                 .fillMaxWidth()
                                 .clickable { showAppRunnerDialog = true }
                                 .testTag("sandbox_preview_card"),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF040D1A)),
+                            colors = CardDefaults.cardColors(containerColor = if (com.example.ui.theme.LocalEchoColors.current.isDark) Color(0xFF040D1A) else EchoCard),
                             border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(EchoCyan))
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
@@ -1256,7 +1256,10 @@ fun AthenaApkBuilderView(
                                         Button(
                                             onClick = { showAppRunnerDialog = true },
                                             modifier = Modifier.fillMaxWidth().height(36.dp),
-                                            colors = ButtonDefaults.buttonColors(containerColor = EchoGreen, contentColor = Color.Black),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = EchoGreen,
+                                                contentColor = if (com.example.ui.theme.LocalEchoColors.current.isDark) Color.Black else Color.White
+                                            ),
                                             shape = RoundedCornerShape(6.dp)
                                         ) {
                                             Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -1379,7 +1382,7 @@ fun AthenaApkBuilderView(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFF020912))
+                                .background(if (com.example.ui.theme.LocalEchoColors.current.isDark) Color(0xFF020912) else com.example.ui.theme.EchoDarkSurface)
                                 .padding(8.dp)
                         ) {
                             result.buildLogs.forEach { log ->

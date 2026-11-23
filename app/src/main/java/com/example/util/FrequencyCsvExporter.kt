@@ -308,8 +308,9 @@ object FrequencyCsvExporter {
         val exportDir = File(context.cacheDir, "exports").apply {
             if (!exists()) mkdirs()
         }
+        val safePrefix = filePrefix.replace(Regex("[^a-zA-Z0-9_-]"), "_").ifBlank { "resonance_frequency_history" }
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val fileName = "${filePrefix}_$timestamp.${format.extension}"
+        val fileName = "${safePrefix}_$timestamp.${format.extension}"
         val file = File(exportDir, fileName)
 
         FileOutputStream(file).use { outputStream ->
@@ -352,6 +353,7 @@ object FrequencyCsvExporter {
             putExtra(Intent.EXTRA_STREAM, contentUri)
             putExtra(Intent.EXTRA_SUBJECT, subject ?: defaultSubject)
             putExtra(Intent.EXTRA_TEXT, "Attached is the exported resonance data from the ATHENA Echo Interface.")
+            clipData = ClipData.newRawUri(file.name, contentUri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }
@@ -374,9 +376,12 @@ object FrequencyCsvExporter {
      * Copies any string contents to system clipboard.
      */
     fun copyToClipboard(context: Context, text: String, label: String = "Resonance Findings"): String {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = ClipData.newPlainText(label, text)
-        clipboard.setPrimaryClip(clip)
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+            ?: (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
+        if (clipboard != null) {
+            val clip = ClipData.newPlainText(label, text)
+            clipboard.setPrimaryClip(clip)
+        }
         return text
     }
 
@@ -386,11 +391,20 @@ object FrequencyCsvExporter {
 
     private fun escapeCsvField(field: String): String {
         if (field.isEmpty()) return ""
-        val containsSpecialChars = field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r')
-        return if (containsSpecialChars) {
-            "\"" + field.replace("\"", "\"\"") + "\""
+        val firstChar = field[0]
+        val formulaSafe = if (firstChar == '=' || firstChar == '+' || firstChar == '@' || firstChar == '\t' || firstChar == '\r' ||
+            (firstChar == '-' && field.getOrNull(1)?.isDigit() != true)
+        ) {
+            "'$field"
         } else {
             field
+        }
+        val containsSpecialChars = formulaSafe.contains(',') || formulaSafe.contains('"') ||
+            formulaSafe.contains('\n') || formulaSafe.contains('\r') || formulaSafe !== field
+        return if (containsSpecialChars) {
+            "\"" + formulaSafe.replace("\"", "\"\"") + "\""
+        } else {
+            formulaSafe
         }
     }
 

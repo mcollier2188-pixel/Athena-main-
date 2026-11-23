@@ -1,5 +1,7 @@
 package com.example.audio
 
+import android.app.Activity
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -8,17 +10,18 @@ import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -33,8 +36,9 @@ object WavAudioExporter {
     private const val SAMPLE_RATE = 44100
     private const val CHANNELS = 1
     private const val BITS_PER_SAMPLE = 16
+    private const val MAX_RECORDING_BYTES = SAMPLE_RATE * 2 * 600 // 10 minutes of 16-bit mono PCM (~52.9 MB raw vs ~530 MB boxed)
 
-    private val scope = CoroutineScope(Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
@@ -42,7 +46,8 @@ object WavAudioExporter {
     private val _elapsedSeconds = MutableStateFlow(0)
     val elapsedSeconds: StateFlow<Int> = _elapsedSeconds.asStateFlow()
 
-    private val recordedSamples = ArrayList<Short>(SAMPLE_RATE * 60) // Up to ~60s initial capacity
+    private val pcmStream = ByteArrayOutputStream(SAMPLE_RATE * 2 * 15)
+    private var encodeScratch = ByteArray(4096)
     private val bufferLock = Any()
     private var timerJob: Job? = null
 
@@ -51,7 +56,7 @@ object WavAudioExporter {
      */
     fun startRecording() {
         synchronized(bufferLock) {
-            recordedSamples.clear()
+            pcmStream.reset()
             _isRecording.value = true
             _elapsedSeconds.value = 0
         }
@@ -68,16 +73,29 @@ object WavAudioExporter {
 
     /**
      * Feed PCM short samples into the recording buffer while audio is streaming.
+     * Writes unboxed little-endian bytes directly to avoid heap boxing on the real-time audio thread.
      */
     fun feedSamples(samples: ShortArray, count: Int) {
         if (!_isRecording.value) return
+        val safeCount = count.coerceIn(0, samples.size)
+        if (safeCount == 0) return
+
         synchronized(bufferLock) {
-            // Safety limit: up to 10 minutes (44100 * 60 * 10 samples)
-            if (recordedSamples.size < SAMPLE_RATE * 600) {
-                for (i in 0 until count) {
-                    recordedSamples.add(samples[i])
-                }
+            if (!_isRecording.value) return
+            val remainingBytes = MAX_RECORDING_BYTES - pcmStream.size()
+            val samplesToCopy = minOf(safeCount, remainingBytes / 2)
+            if (samplesToCopy <= 0) return
+
+            val byteCount = samplesToCopy * 2
+            if (encodeScratch.size < byteCount) {
+                encodeScratch = ByteArray(byteCount)
             }
+            for (i in 0 until samplesToCopy) {
+                val s = samples[i].toInt()
+                encodeScratch[i * 2] = (s and 0xff).toByte()
+                encodeScratch[i * 2 + 1] = ((s shr 8) and 0xff).toByte()
+            }
+            pcmStream.write(encodeScratch, 0, byteCount)
         }
     }
 
@@ -89,14 +107,14 @@ object WavAudioExporter {
         timerJob = null
         _isRecording.value = false
 
-        val snapshot: ShortArray
+        val pcmBytes: ByteArray
         synchronized(bufferLock) {
-            if (recordedSamples.isEmpty()) {
+            if (pcmStream.size() == 0) {
                 Log.w(TAG, "Recorded buffer was empty; export cancelled.")
                 return null
             }
-            snapshot = ShortArray(recordedSamples.size) { recordedSamples[it] }
-            recordedSamples.clear()
+            pcmBytes = pcmStream.toByteArray()
+            pcmStream.reset()
         }
 
         return try {
@@ -105,8 +123,8 @@ object WavAudioExporter {
             val safeLabel = frequencyLabel.replace(Regex("[^a-zA-Z0-9.-]"), "_")
             val wavFile = File(exportDir, "Athena_${safeLabel}_$timeStamp.wav")
 
-            writeWavFile(wavFile, snapshot, SAMPLE_RATE)
-            Log.i(TAG, "Exported WAV: ${wavFile.absolutePath} (${snapshot.size} samples, ${wavFile.length()} bytes)")
+            writeWavBytes(wavFile, pcmBytes, SAMPLE_RATE)
+            Log.i(TAG, "Exported WAV: ${wavFile.absolutePath} (${pcmBytes.size / 2} samples, ${wavFile.length()} bytes)")
             wavFile
         } catch (e: Exception) {
             Log.e(TAG, "Failed to write WAV file: ${e.message}", e)
@@ -114,22 +132,42 @@ object WavAudioExporter {
         }
     }
 
+    private fun writeWavBytes(outputFile: File, pcmBytes: ByteArray, sampleRate: Int = SAMPLE_RATE) {
+        val totalAudioLen = pcmBytes.size.toLong()
+        val totalDataLen = totalAudioLen + 36
+        val byteRate = (sampleRate * CHANNELS * BITS_PER_SAMPLE / 8).toLong()
+
+        BufferedOutputStream(FileOutputStream(outputFile)).use { out ->
+            writeWavHeader(out, totalAudioLen, totalDataLen, sampleRate.toLong(), CHANNELS, byteRate)
+            out.write(pcmBytes)
+            out.flush()
+        }
+    }
+
     /**
-     * Encodes 16-bit PCM ShortArray to standard RIFF/WAVE file format.
+     * Encodes 16-bit PCM ShortArray to standard RIFF/WAVE file format in streaming 8 KB chunks.
      */
     fun writeWavFile(outputFile: File, samples: ShortArray, sampleRate: Int = SAMPLE_RATE) {
         val totalAudioLen = (samples.size * 2).toLong()
         val totalDataLen = totalAudioLen + 36
         val byteRate = (sampleRate * CHANNELS * BITS_PER_SAMPLE / 8).toLong()
 
-        FileOutputStream(outputFile).use { out ->
+        BufferedOutputStream(FileOutputStream(outputFile)).use { out ->
             writeWavHeader(out, totalAudioLen, totalDataLen, sampleRate.toLong(), CHANNELS, byteRate)
 
-            val byteBuffer = ByteBuffer.allocate(samples.size * 2).order(ByteOrder.LITTLE_ENDIAN)
-            for (sample in samples) {
-                byteBuffer.putShort(sample)
+            val chunkSamples = 4096
+            val chunkBytes = ByteArray(chunkSamples * 2)
+            var offset = 0
+            while (offset < samples.size) {
+                val count = minOf(chunkSamples, samples.size - offset)
+                for (i in 0 until count) {
+                    val s = samples[offset + i].toInt()
+                    chunkBytes[i * 2] = (s and 0xff).toByte()
+                    chunkBytes[i * 2 + 1] = ((s shr 8) and 0xff).toByte()
+                }
+                out.write(chunkBytes, 0, count * 2)
+                offset += count
             }
-            out.write(byteBuffer.array())
             out.flush()
         }
     }
@@ -203,9 +241,15 @@ object WavAudioExporter {
                 putExtra(Intent.EXTRA_STREAM, uri)
                 putExtra(Intent.EXTRA_SUBJECT, title)
                 putExtra(Intent.EXTRA_TEXT, "Synthesized acoustic tone recorded with ATHENA Echo-Interface.")
+                clipData = ClipData.newRawUri(title, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(shareIntent, "Share WAV Audio"))
+            val chooser = Intent.createChooser(shareIntent, "Share WAV Audio").apply {
+                if (context !is Activity) {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            }
+            context.startActivity(chooser)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to share WAV file: ${e.message}", e)
         }

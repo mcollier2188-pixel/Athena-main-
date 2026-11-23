@@ -71,10 +71,32 @@ class ExampleUnitTest {
       **Unified Topic:** *Non-Thermal Zero-Point Energy Extraction via Dynamical Casimir Cavity Modulation*
     """.trimIndent()
 
-    val topicLine = sampleAnalysis.lines().firstOrNull { it.contains("Unified Topic:") }
-    assertNotNull(topicLine)
-    val extracted = topicLine!!.substringAfter(":").replace("*", "").trim()
+    val extracted = com.example.ui.components.extractDebateTopic(sampleAnalysis)
     assertEquals("Non-Thermal Zero-Point Energy Extraction via Dynamical Casimir Cavity Modulation", extracted)
+  }
+
+  @Test
+  fun `verify youtube video id parser handles standard shorts live and rejects xss`() {
+    assertEquals("jfKfPfyJRdk", com.example.ui.components.parseYouTubeVideoId("jfKfPfyJRdk"))
+    assertEquals(
+        "jfKfPfyJRdk",
+        com.example.ui.components.parseYouTubeVideoId("https://www.youtube.com/watch?v=jfKfPfyJRdk&t=42s")
+    )
+    assertEquals(
+        "jfKfPfyJRdk",
+        com.example.ui.components.parseYouTubeVideoId("https://youtu.be/jfKfPfyJRdk?si=abc")
+    )
+    assertEquals(
+        "jfKfPfyJRdk",
+        com.example.ui.components.parseYouTubeVideoId("https://www.youtube.com/shorts/jfKfPfyJRdk")
+    )
+    assertEquals(
+        "jfKfPfyJRdk",
+        com.example.ui.components.parseYouTubeVideoId("https://www.youtube.com/live/jfKfPfyJRdk?feature=share")
+    )
+    assertEquals("", com.example.ui.components.parseYouTubeVideoId("\" onload=\"alert(1)"))
+    assertEquals("", com.example.ui.components.parseYouTubeVideoId("javascript:alert(1)"))
+    assertEquals("", com.example.ui.components.parseYouTubeVideoId("too_short"))
   }
 
   @Test

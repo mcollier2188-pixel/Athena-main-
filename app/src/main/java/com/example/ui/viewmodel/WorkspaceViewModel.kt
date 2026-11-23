@@ -130,13 +130,13 @@ class WorkspaceViewModel(
     val isSelectionMode = MutableStateFlow(false)
     val selectedItemIds = MutableStateFlow<Set<String>>(emptySet())
 
-    val allFolders: StateFlow<List<WorkspaceItem>> = dao.getAllLive()
+    val allItems: StateFlow<List<WorkspaceItem>> = dao.getAllLive()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allFolders: StateFlow<List<WorkspaceItem>> = allItems
         .combine(MutableStateFlow(Unit)) { items, _ ->
             items.filter { it.kind == "folder" }
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val allItems: StateFlow<List<WorkspaceItem>> = dao.getAllLive()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val currentItems: StateFlow<List<WorkspaceItem>> = combine(
@@ -161,7 +161,20 @@ class WorkspaceViewModel(
                     firestoreRepository.observeNotes(currentUserId).collect { remoteNotes ->
                         remoteNotes.forEach { remote ->
                             val local = dao.getItemById(remote.id)
-                            if (local == null || local.modifiedTimestamp < System.currentTimeMillis() - 1000) {
+                            val remoteUpdatedMs = remote.updatedAt?.toDate()?.time
+                                ?: remote.createdAt?.toDate()?.time
+                                ?: 0L
+                            // Only apply remote snapshot if new locally or strictly newer than local edit,
+                            // and never resurrect locally trashed items from older snapshots.
+                            val shouldApply = if (local == null) {
+                                true
+                            } else if (local.isDeleted) {
+                                val deletedAt = local.deletedTimestamp ?: local.modifiedTimestamp
+                                remoteUpdatedMs > deletedAt
+                            } else {
+                                remoteUpdatedMs > local.modifiedTimestamp
+                            }
+                            if (shouldApply) {
                                 dao.insertItem(
                                     WorkspaceItem(
                                         id = remote.id,
@@ -169,15 +182,19 @@ class WorkspaceViewModel(
                                         kind = remote.kind,
                                         name = remote.name,
                                         text = remote.text,
+                                        fileType = local?.fileType.orEmpty(),
+                                        fileUri = local?.fileUri,
                                         tags = remote.tags,
                                         isPinned = remote.isPinned,
-                                        modifiedTimestamp = System.currentTimeMillis(),
-                                        size = remote.text.length.toLong()
+                                        modifiedTimestamp = if (remoteUpdatedMs > 0L) remoteUpdatedMs else System.currentTimeMillis(),
+                                        size = local?.size?.takeIf { it > 0L && remote.kind == "file" } ?: remote.text.length.toLong()
                                     )
                                 )
                             }
                         }
                     }
+                } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     // Handled gracefully offline
                 }
@@ -314,7 +331,7 @@ class WorkspaceViewModel(
     }
 
     fun togglePin(item: WorkspaceItem) {
-        val updated = item.copy(isPinned = !item.isPinned)
+        val updated = item.copy(isPinned = !item.isPinned, modifiedTimestamp = System.currentTimeMillis())
         viewModelScope.launch {
             dao.updateItem(updated)
             if (currentUserId != null && firestoreRepository != null) {
@@ -353,12 +370,15 @@ class WorkspaceViewModel(
 
     fun deletePermanently(id: String) {
         viewModelScope.launch {
+            val treeIds = dao.getTreeIds(id).ifEmpty { listOf(id) }
             dao.deletePermanently(id)
             if (currentUserId != null && firestoreRepository != null) {
-                try {
-                    firestoreRepository.deleteNote(currentUserId, id)
-                } catch (e: Exception) {
-                    // Handled
+                treeIds.forEach { targetId ->
+                    try {
+                        firestoreRepository.deleteNote(currentUserId, targetId)
+                    } catch (e: Exception) {
+                        // Handled
+                    }
                 }
             }
         }
@@ -366,10 +386,17 @@ class WorkspaceViewModel(
 
     fun deleteSelectedPermanently() {
         val ids = selectedItemIds.value.toList()
+        if (ids.isEmpty()) return
         viewModelScope.launch {
-            dao.deletePermanently(ids)
+            val allToDelete = LinkedHashSet<String>()
+            ids.forEach { id ->
+                allToDelete.addAll(dao.getTreeIds(id).ifEmpty { listOf(id) })
+            }
+            allToDelete.chunked(500).forEach { batch ->
+                dao.deletePermanently(batch)
+            }
             if (currentUserId != null && firestoreRepository != null) {
-                ids.forEach { id ->
+                allToDelete.forEach { id ->
                     try {
                         firestoreRepository.deleteNote(currentUserId, id)
                     } catch (e: Exception) {
@@ -383,19 +410,25 @@ class WorkspaceViewModel(
 
     fun moveSelectedToTrash() {
         val ids = selectedItemIds.value.toList()
+        if (ids.isEmpty()) return
         viewModelScope.launch {
-            ids.forEach { dao.moveToTrash(it) }
+            val now = System.currentTimeMillis()
+            ids.forEach { dao.moveToTrash(it, now) }
             clearSelection()
         }
     }
 
     fun moveSelectedToFolder(targetFolderId: String?) {
         val ids = selectedItemIds.value.toList()
+        if (ids.isEmpty()) return
         viewModelScope.launch {
+            val now = System.currentTimeMillis()
             ids.forEach { id ->
+                if (id == targetFolderId) return@forEach
+                if (targetFolderId != null && targetFolderId in dao.getTreeIds(id)) return@forEach
                 val item = dao.getItemById(id)
                 if (item != null) {
-                    val updated = item.copy(parentId = targetFolderId)
+                    val updated = item.copy(parentId = targetFolderId, modifiedTimestamp = now)
                     dao.updateItem(updated)
                     if (currentUserId != null && firestoreRepository != null) {
                         try {
@@ -424,11 +457,13 @@ class WorkspaceViewModel(
 
     fun togglePinSelected() {
         val ids = selectedItemIds.value.toList()
+        if (ids.isEmpty()) return
         viewModelScope.launch {
+            val now = System.currentTimeMillis()
             ids.forEach { id ->
                 val item = dao.getItemById(id)
                 if (item != null) {
-                    val updated = item.copy(isPinned = !item.isPinned)
+                    val updated = item.copy(isPinned = !item.isPinned, modifiedTimestamp = now)
                     dao.updateItem(updated)
                     if (currentUserId != null && firestoreRepository != null) {
                         try {
@@ -459,6 +494,30 @@ class WorkspaceViewModel(
     // Echo Projects Integration
     // =========================================================
 
+    private suspend fun getOrCreateEchoProjectsFolderId(defaultTags: String = "echo, visual, scripts"): String {
+        val all = dao.getAll()
+        val echoFolder = all.find {
+            it.kind == "folder" && (it.name.contains("Echo Projects", ignoreCase = true) || it.name.contains("Echo Cinema", ignoreCase = true))
+        }
+        if (echoFolder != null) return echoFolder.id
+
+        val deterministicId = "folder_echo_projects_main"
+        val existingById = dao.getItemById(deterministicId)
+        if (existingById != null && !existingById.isDeleted) return existingById.id
+
+        dao.insertItem(
+            WorkspaceItem(
+                id = deterministicId,
+                parentId = null,
+                kind = "folder",
+                name = "🎬 Echo Projects",
+                tags = defaultTags,
+                modifiedTimestamp = System.currentTimeMillis()
+            )
+        )
+        return deterministicId
+    }
+
     /**
      * Creates or locates the 'Echo Projects' folder and adds a project note into it.
      */
@@ -469,25 +528,7 @@ class WorkspaceViewModel(
         onComplete: (String, String) -> Unit = { _, _ -> }
     ) {
         viewModelScope.launch {
-            val all = dao.getAll()
-            val echoFolder = all.find { it.kind == "folder" && (it.name.contains("Echo Projects", ignoreCase = true) || it.name.contains("Echo Cinema", ignoreCase = true)) }
-            val folderId = if (echoFolder != null) {
-                echoFolder.id
-            } else {
-                val newFolderId = UUID.randomUUID().toString()
-                dao.insertItem(
-                    WorkspaceItem(
-                        id = newFolderId,
-                        parentId = null,
-                        kind = "folder",
-                        name = "🎬 Echo Projects",
-                        tags = "echo, visual, scripts",
-                        modifiedTimestamp = System.currentTimeMillis()
-                    )
-                )
-                newFolderId
-            }
-
+            val folderId = getOrCreateEchoProjectsFolderId()
             val noteId = UUID.randomUUID().toString()
             val note = WorkspaceItem(
                 id = noteId,
@@ -505,28 +546,15 @@ class WorkspaceViewModel(
     }
 
     /**
-     * Imports all primary Echo production projects into Room Workspace.
+     * Imports all primary Echo production projects into Room Workspace idempotently.
      */
     fun importAllEchoProjects(onComplete: (Int, String) -> Unit = { _, _ -> }) {
         viewModelScope.launch {
-            val all = dao.getAll()
-            val echoFolder = all.find { it.kind == "folder" && (it.name.contains("Echo Projects", ignoreCase = true) || it.name.contains("Echo Cinema", ignoreCase = true)) }
-            val folderId = if (echoFolder != null) {
-                echoFolder.id
-            } else {
-                val newFolderId = UUID.randomUUID().toString()
-                dao.insertItem(
-                    WorkspaceItem(
-                        id = newFolderId,
-                        parentId = null,
-                        kind = "folder",
-                        name = "🎬 Echo Projects",
-                        tags = "echo, visual, scripts",
-                        modifiedTimestamp = System.currentTimeMillis()
-                    )
-                )
-                newFolderId
-            }
+            val folderId = getOrCreateEchoProjectsFolderId()
+            val existingNamesInFolder = dao.getAll()
+                .filter { it.parentId == folderId && !it.isDeleted }
+                .map { it.name }
+                .toSet()
 
             val cinemaItems = listOf(
                 Pair(
@@ -623,20 +651,23 @@ Carrier Node: 85.200 Hz (Master 2x Harmonic of 42.6 Hz Bedrock Waveguide)
 
             var addedCount = 0
             cinemaItems.forEach { (title, body) ->
-                val noteId = UUID.randomUUID().toString()
-                dao.insertItem(
-                    WorkspaceItem(
-                        id = noteId,
-                        parentId = folderId,
-                        kind = "note",
-                        name = title,
-                        text = body.trimIndent(),
-                        tags = "echo, saga, script",
-                        modifiedTimestamp = System.currentTimeMillis(),
-                        size = body.length.toLong()
+                if (title !in existingNamesInFolder) {
+                    val trimmedBody = body.trimIndent()
+                    val noteId = UUID.randomUUID().toString()
+                    dao.insertItem(
+                        WorkspaceItem(
+                            id = noteId,
+                            parentId = folderId,
+                            kind = "note",
+                            name = title,
+                            text = trimmedBody,
+                            tags = "echo, saga, script",
+                            modifiedTimestamp = System.currentTimeMillis(),
+                            size = trimmedBody.length.toLong()
+                        )
                     )
-                )
-                addedCount++
+                    addedCount++
+                }
             }
             onComplete(addedCount, folderId)
         }
@@ -654,24 +685,7 @@ Carrier Node: 85.200 Hz (Master 2x Harmonic of 42.6 Hz Bedrock Waveguide)
         onComplete: (String, String) -> Unit = { _, _ -> }
     ) {
         viewModelScope.launch {
-            val all = dao.getAll()
-            val echoFolder = all.find { it.kind == "folder" && (it.name.contains("Echo Projects", ignoreCase = true) || it.name.contains("Echo Cinema", ignoreCase = true)) }
-            val folderId = if (echoFolder != null) {
-                echoFolder.id
-            } else {
-                val newFolderId = UUID.randomUUID().toString()
-                dao.insertItem(
-                    WorkspaceItem(
-                        id = newFolderId,
-                        parentId = null,
-                        kind = "folder",
-                        name = "🎬 Echo Projects",
-                        tags = "echo, visual, media, uploads",
-                        modifiedTimestamp = System.currentTimeMillis()
-                    )
-                )
-                newFolderId
-            }
+            val folderId = getOrCreateEchoProjectsFolderId("echo, visual, media, uploads")
 
             val fileKind = when {
                 mimeType.startsWith("text/") || fileName.endsWith(".txt") || fileName.endsWith(".md") -> "note"
@@ -694,6 +708,7 @@ Carrier Node: 85.200 Hz (Master 2x Harmonic of 42.6 Hz Bedrock Waveguide)
                 name = fileName,
                 text = textContent,
                 fileType = mimeType,
+                fileUri = uriString,
                 tags = tagCategory,
                 modifiedTimestamp = System.currentTimeMillis(),
                 size = if (fileSizeBytes > 0) fileSizeBytes else textContent.length.toLong()

@@ -115,4 +115,36 @@ class FrequencyCsvExporterTest {
         val textExport = FrequencyCsvExporter.exportHistoricalResonanceData(entries, ExportFormat.PLAIN_TEXT)
         assertTrue(textExport.contains("ATHENA RESONANCE INTERFACE"))
     }
+
+    @Test
+    fun testGenerateCsv_neutralizesFormulaInjectionPreservingNegativeNumbers() {
+        val entries = listOf(
+            FrequencyHistoryEntry(
+                id = 1,
+                frequencyHz = 42.6,
+                sessionNote = "=CMD|' /C calc'!A0"
+            ),
+            FrequencyHistoryEntry(
+                id = 2,
+                frequencyHz = 42.6,
+                sessionNote = "+SUM(1,2)"
+            ),
+            FrequencyHistoryEntry(
+                id = 3,
+                frequencyHz = 42.6,
+                sessionNote = "-HYPERLINK(\"http://evil.example\")"
+            ),
+            FrequencyHistoryEntry(
+                id = 4,
+                frequencyHz = 42.6,
+                sessionNote = "-42.6 dB offset"
+            )
+        )
+
+        val csv = FrequencyCsvExporter.generateCsv(entries)
+        assertTrue("Formula starting with = must be neutralized", csv.contains("\"'=CMD|' /C calc'!A0\""))
+        assertTrue("Formula starting with + must be neutralized", csv.contains("\"'+SUM(1,2)\""))
+        assertTrue("Formula starting with -alpha must be neutralized", csv.contains("\"'-HYPERLINK(\"\"http://evil.example\"\")\""))
+        assertTrue("Negative numeric note should remain unprefixed", csv.contains("-42.6 dB offset"))
+    }
 }

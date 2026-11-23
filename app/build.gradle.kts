@@ -72,6 +72,11 @@ android {
 
 tasks.withType<Test> {
   failFast = true
+  systemProperty(
+    "robolectric.dependency.repo.url",
+    System.getProperty("robolectric.dependency.repo.url")
+      ?: "https://maven-central.storage-download.googleapis.com/maven2"
+  )
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
@@ -110,7 +115,7 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
-  implementation(libs.converter.moshi)
+  // implementation(libs.converter.moshi)
   implementation(libs.firebase.ai)
   // Firestore and Google Sign-In via Credential Manager
   implementation(libs.firebase.firestore)
@@ -122,11 +127,11 @@ dependencies {
   implementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  implementation(libs.logging.interceptor)
-  implementation(libs.moshi.kotlin)
+  // implementation(libs.logging.interceptor)
+  // implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
-  implementation(libs.retrofit)
+  // implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
@@ -141,5 +146,5 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
-  "ksp"(libs.moshi.kotlin.codegen)
+  // "ksp"(libs.moshi.kotlin.codegen)
 }

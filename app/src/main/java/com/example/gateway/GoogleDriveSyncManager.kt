@@ -129,11 +129,14 @@ object GoogleDriveSyncManager {
     private val _videosLastSyncTime = MutableStateFlow(0L)
     val videosLastSyncTime: StateFlow<Long> = _videosLastSyncTime.asStateFlow()
 
+    @Volatile
     private var isInitialized = false
+    private val syncMutex = kotlinx.coroutines.sync.Mutex()
 
+    @Synchronized
     fun initialize(context: Context) {
         if (isInitialized) return
-        val prefs = getPrefs(context)
+        val prefs = getPrefs(context.applicationContext)
         val defaultTs = System.currentTimeMillis() - 180_000L
 
         _isAutoSyncEnabled.value = prefs.getBoolean(KEY_AUTOSYNC, true)
@@ -277,155 +280,181 @@ object GoogleDriveSyncManager {
     /**
      * Synchronizes a specific category on demand to Google Drive.
      */
+    private fun canAutoSyncUnderNetworkPolicy(context: Context): Boolean {
+        if (!_isWifiOnly.value) return true
+        val status = com.example.util.NetworkConnectivityMonitor.getInitialStatus(context)
+        return !status.isConnected || status.isWifi
+    }
+
+    private suspend fun writeCategoryBackupInternal(appContext: Context, category: DriveSyncCategory): Int {
+        val backupDir = File(appContext.filesDir, "google_drive_sync")
+        if (!backupDir.exists()) backupDir.mkdirs()
+        val now = System.currentTimeMillis()
+
+        return when (category) {
+            DriveSyncCategory.NOTES -> {
+                val db = WorkspaceDatabase.getDatabase(appContext)
+                val notes = db.workspaceDao().getAll()
+                val itemsCount = notes.size
+
+                val root = JSONObject().apply {
+                    put("backup_source", "ATHENA Workspace Notes & Research")
+                    put("backup_timestamp", now)
+                    put("drive_folder", category.driveFolder)
+                    put("item_count", itemsCount)
+                    val itemsArray = JSONArray()
+                    notes.forEach { item ->
+                        itemsArray.put(JSONObject().apply {
+                            put("id", item.id)
+                            put("name", item.name)
+                            put("kind", item.kind)
+                            put("text", item.text)
+                            put("fileType", item.fileType)
+                            put("fileUri", item.fileUri)
+                            put("tags", item.tags)
+                            put("isPinned", item.isPinned)
+                            put("modifiedTimestamp", item.modifiedTimestamp)
+                            put("size", item.size)
+                            put("parentId", item.parentId)
+                        })
+                    }
+                    put("items", itemsArray)
+                }
+
+                File(backupDir, "workspace_drive_backup.json").writeText(root.toString(2))
+                _notesSyncedCount.value = itemsCount
+                _notesLastSyncTime.value = now
+                getPrefs(appContext).edit()
+                    .putLong(KEY_LAST_SYNC_NOTES, now)
+                    .putInt(KEY_COUNT_NOTES, itemsCount)
+                    .apply()
+                itemsCount
+            }
+
+            DriveSyncCategory.PHOTOS -> {
+                MediaVaultRepository.initializeWithDefaults(appContext)
+                val vaultPhotos = MediaVaultRepository.items.value.filter { it.type == MediaType.PHOTO }
+                val itemsCount = vaultPhotos.size
+
+                val root = JSONObject().apply {
+                    put("backup_source", "ATHENA Photos & Camera Snapshots")
+                    put("backup_timestamp", now)
+                    put("drive_folder", category.driveFolder)
+                    put("item_count", itemsCount)
+                    val photoArray = JSONArray()
+                    vaultPhotos.forEach { photo ->
+                        photoArray.put(JSONObject().apply {
+                            put("id", photo.id)
+                            put("title", photo.title)
+                            put("subtitle", photo.subtitle)
+                            put("uri", photo.uri.toString())
+                            put("dateAdded", photo.dateAdded)
+                        })
+                    }
+                    put("photos", photoArray)
+                }
+
+                File(backupDir, "photos_snapshots_drive_backup.json").writeText(root.toString(2))
+                _photosSyncedCount.value = itemsCount
+                _photosLastSyncTime.value = now
+                getPrefs(appContext).edit()
+                    .putLong(KEY_LAST_SYNC_PHOTOS, now)
+                    .putInt(KEY_COUNT_PHOTOS, itemsCount)
+                    .apply()
+                itemsCount
+            }
+
+            DriveSyncCategory.VIDEOS -> {
+                GoogleDriveVideoSyncManager.initialize(appContext)
+                val videos = GoogleDriveVideoSyncManager.driveVideos.value
+                val itemsCount = videos.size
+
+                val root = JSONObject().apply {
+                    put("backup_source", "ATHENA AI Generated Videos")
+                    put("backup_timestamp", now)
+                    put("drive_folder", category.driveFolder)
+                    put("item_count", itemsCount)
+                    val videoArray = JSONArray()
+                    videos.forEach { vid ->
+                        videoArray.put(JSONObject().apply {
+                            put("id", vid.id)
+                            put("title", vid.title)
+                            put("prompt", vid.prompt)
+                            put("model", vid.model)
+                            put("aspectRatio", vid.aspectRatio)
+                            put("durationSec", vid.durationSec)
+                            put("syncedAtTimestamp", vid.syncedAtTimestamp)
+                        })
+                    }
+                    put("videos", videoArray)
+                }
+
+                File(backupDir, "ai_videos_drive_backup.json").writeText(root.toString(2))
+                _videosSyncedCount.value = itemsCount
+                _videosLastSyncTime.value = now
+                getPrefs(appContext).edit()
+                    .putLong(KEY_LAST_SYNC_VIDEOS, now)
+                    .putInt(KEY_COUNT_VIDEOS, itemsCount)
+                    .apply()
+                itemsCount
+            }
+        }
+    }
+
+    /**
+     * Synchronizes a specific category on demand to local Google Drive staging container.
+     */
     fun performCategorySync(
         context: Context,
         category: DriveSyncCategory,
         scope: CoroutineScope,
-        onComplete: ((success: Boolean, message: String) -> Unit)? = null
+        onComplete: ((success: Boolean, message: String) -> Unit)? = null,
+        showToast: Boolean = true
     ) {
-        initialize(context)
+        val appContext = context.applicationContext
+        initialize(appContext)
         _isSyncing.value = true
-        _syncStatusMessage.value = "Synchronizing ${category.title} to Google Drive..."
+        _syncStatusMessage.value = "Synchronizing ${category.title}..."
 
         scope.launch(Dispatchers.IO) {
             try {
-                val backupDir = File(context.filesDir, "google_drive_sync")
-                if (!backupDir.exists()) backupDir.mkdirs()
-
-                val now = System.currentTimeMillis()
-                var itemsCount = 0
-
-                when (category) {
-                    DriveSyncCategory.NOTES -> {
-                        val db = WorkspaceDatabase.getDatabase(context)
-                        val notes = db.workspaceDao().getAll()
-                        itemsCount = notes.size
-
-                        val root = JSONObject().apply {
-                            put("backup_source", "ATHENA Workspace Notes & Research")
-                            put("backup_timestamp", now)
-                            put("drive_folder", category.driveFolder)
-                            put("item_count", notes.size)
-                            val itemsArray = JSONArray()
-                            notes.forEach { item ->
-                                itemsArray.put(JSONObject().apply {
-                                    put("id", item.id)
-                                    put("name", item.name)
-                                    put("kind", item.kind)
-                                    put("text", item.text)
-                                    put("tags", item.tags)
-                                    put("isPinned", item.isPinned)
-                                    put("modifiedTimestamp", item.modifiedTimestamp)
-                                    put("parentId", item.parentId)
-                                })
-                            }
-                            put("items", itemsArray)
-                        }
-
-                        val notesFile = File(backupDir, "workspace_drive_backup.json")
-                        notesFile.writeText(root.toString(2))
-
-                        _notesSyncedCount.value = itemsCount
-                        _notesLastSyncTime.value = now
-                        getPrefs(context).edit()
-                            .putLong(KEY_LAST_SYNC_NOTES, now)
-                            .putInt(KEY_COUNT_NOTES, itemsCount)
-                            .apply()
-                    }
-
-                    DriveSyncCategory.PHOTOS -> {
-                        MediaVaultRepository.initializeWithDefaults(context)
-                        val vaultPhotos = MediaVaultRepository.items.value.filter { it.type == MediaType.PHOTO }
-                        itemsCount = vaultPhotos.size.coerceAtLeast(8)
-
-                        val root = JSONObject().apply {
-                            put("backup_source", "ATHENA Photos & Camera Snapshots")
-                            put("backup_timestamp", now)
-                            put("drive_folder", category.driveFolder)
-                            put("item_count", itemsCount)
-                            val photoArray = JSONArray()
-                            vaultPhotos.forEach { photo ->
-                                photoArray.put(JSONObject().apply {
-                                    put("id", photo.id)
-                                    put("title", photo.title)
-                                    put("subtitle", photo.subtitle)
-                                    put("uri", photo.uri.toString())
-                                    put("dateAdded", photo.dateAdded)
-                                })
-                            }
-                            put("photos", photoArray)
-                        }
-
-                        val photosFile = File(backupDir, "photos_snapshots_drive_backup.json")
-                        photosFile.writeText(root.toString(2))
-
-                        _photosSyncedCount.value = itemsCount
-                        _photosLastSyncTime.value = now
-                        getPrefs(context).edit()
-                            .putLong(KEY_LAST_SYNC_PHOTOS, now)
-                            .putInt(KEY_COUNT_PHOTOS, itemsCount)
-                            .apply()
-                    }
-
-                    DriveSyncCategory.VIDEOS -> {
-                        GoogleDriveVideoSyncManager.initialize(context)
-                        val videos = GoogleDriveVideoSyncManager.driveVideos.value
-                        itemsCount = videos.size.coerceAtLeast(5)
-
-                        val root = JSONObject().apply {
-                            put("backup_source", "ATHENA AI Generated Videos")
-                            put("backup_timestamp", now)
-                            put("drive_folder", category.driveFolder)
-                            put("item_count", itemsCount)
-                            val videoArray = JSONArray()
-                            videos.forEach { vid ->
-                                videoArray.put(JSONObject().apply {
-                                    put("id", vid.id)
-                                    put("title", vid.title)
-                                    put("prompt", vid.prompt)
-                                    put("model", vid.model)
-                                    put("aspectRatio", vid.aspectRatio)
-                                    put("durationSec", vid.durationSec)
-                                    put("syncedAtTimestamp", vid.syncedAtTimestamp)
-                                })
-                            }
-                            put("videos", videoArray)
-                        }
-
-                        val videosFile = File(backupDir, "ai_videos_drive_backup.json")
-                        videosFile.writeText(root.toString(2))
-
-                        _videosSyncedCount.value = itemsCount
-                        _videosLastSyncTime.value = now
-                        getPrefs(context).edit()
-                            .putLong(KEY_LAST_SYNC_VIDEOS, now)
-                            .putInt(KEY_COUNT_VIDEOS, itemsCount)
-                            .apply()
+                val itemsCount = syncMutex.lock().let {
+                    try {
+                        writeCategoryBackupInternal(appContext, category)
+                    } finally {
+                        syncMutex.unlock()
                     }
                 }
 
+                val now = System.currentTimeMillis()
                 _lastSyncTimestamp.value = now
                 val totalCount = _notesSyncedCount.value + _photosSyncedCount.value + _videosSyncedCount.value
                 _syncedItemsCount.value = totalCount
-                getPrefs(context).edit()
+                getPrefs(appContext).edit()
                     .putLong(KEY_LAST_SYNC, now)
                     .putInt(KEY_SYNCED_COUNT, totalCount)
                     .apply()
 
-                _syncStatusMessage.value = "Synced ${category.title} ($itemsCount items) to Google Drive"
+                _syncStatusMessage.value = "Backed up ${category.title} ($itemsCount items)"
 
                 withContext(Dispatchers.Main) {
-                    _isSyncing.value = false
-                    Toast.makeText(context, "Synced $itemsCount ${category.title} to Google Drive", Toast.LENGTH_SHORT).show()
+                    if (showToast) {
+                        Toast.makeText(appContext, "Backed up $itemsCount ${category.title}", Toast.LENGTH_SHORT).show()
+                    }
                     onComplete?.invoke(true, "Synced $itemsCount items")
                 }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
+                _syncStatusMessage.value = "Sync failed: ${e.localizedMessage ?: "Unknown error"}"
                 withContext(Dispatchers.Main) {
-                    _isSyncing.value = false
-                    _syncStatusMessage.value = "Sync failed: ${e.localizedMessage ?: "Unknown error"}"
-                    Toast.makeText(context, "Drive sync error: ${e.message}", Toast.LENGTH_SHORT).show()
+                    if (showToast) {
+                        Toast.makeText(appContext, "Sync error: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
                     onComplete?.invoke(false, e.message ?: "Sync failed")
                 }
+            } finally {
+                _isSyncing.value = false
             }
         }
     }
@@ -438,68 +467,50 @@ object GoogleDriveSyncManager {
         scope: CoroutineScope,
         onComplete: ((success: Boolean, message: String) -> Unit)? = null
     ) {
-        initialize(context)
+        val appContext = context.applicationContext
+        initialize(appContext)
         _isSyncing.value = true
-        _syncStatusMessage.value = "Synchronizing all enabled categories to Google Drive..."
+        _syncStatusMessage.value = "Synchronizing all enabled categories..."
 
         scope.launch(Dispatchers.IO) {
             try {
-                var totalSynced = 0
-                val activeCategories = DriveSyncCategory.entries.filter { isCategoryAutoSyncEnabled(it).value }
-
-                for (cat in activeCategories) {
-                    val backupDir = File(context.filesDir, "google_drive_sync")
-                    if (!backupDir.exists()) backupDir.mkdirs()
-                    val now = System.currentTimeMillis()
-
-                    when (cat) {
-                        DriveSyncCategory.NOTES -> {
-                            val db = WorkspaceDatabase.getDatabase(context)
-                            val notes = db.workspaceDao().getAll()
-                            totalSynced += notes.size
-                            _notesSyncedCount.value = notes.size
-                            _notesLastSyncTime.value = now
+                val totalSynced = syncMutex.lock().let {
+                    try {
+                        var sum = 0
+                        val activeCategories = DriveSyncCategory.entries.filter { isCategoryAutoSyncEnabled(it).value }
+                        for (cat in activeCategories) {
+                            sum += writeCategoryBackupInternal(appContext, cat)
                         }
-                        DriveSyncCategory.PHOTOS -> {
-                            MediaVaultRepository.initializeWithDefaults(context)
-                            val photos = MediaVaultRepository.items.value.filter { it.type == MediaType.PHOTO }
-                            val count = photos.size.coerceAtLeast(8)
-                            totalSynced += count
-                            _photosSyncedCount.value = count
-                            _photosLastSyncTime.value = now
-                        }
-                        DriveSyncCategory.VIDEOS -> {
-                            GoogleDriveVideoSyncManager.initialize(context)
-                            val count = GoogleDriveVideoSyncManager.driveVideos.value.size.coerceAtLeast(5)
-                            totalSynced += count
-                            _videosSyncedCount.value = count
-                            _videosLastSyncTime.value = now
-                        }
+                        sum
+                    } finally {
+                        syncMutex.unlock()
                     }
                 }
 
                 val now = System.currentTimeMillis()
                 _lastSyncTimestamp.value = now
                 _syncedItemsCount.value = totalSynced
-                getPrefs(context).edit()
+                getPrefs(appContext).edit()
                     .putLong(KEY_LAST_SYNC, now)
                     .putInt(KEY_SYNCED_COUNT, totalSynced)
                     .apply()
 
-                _syncStatusMessage.value = "All active categories synced ($totalSynced items total)"
+                _syncStatusMessage.value = "All active categories backed up ($totalSynced items total)"
 
                 withContext(Dispatchers.Main) {
-                    _isSyncing.value = false
-                    Toast.makeText(context, "Cloud sync complete: $totalSynced items updated", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(appContext, "Backup complete: $totalSynced items updated", Toast.LENGTH_SHORT).show()
                     onComplete?.invoke(true, "All categories synced")
                 }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
+                _syncStatusMessage.value = "Sync error: ${e.localizedMessage ?: "Unknown"}"
                 withContext(Dispatchers.Main) {
-                    _isSyncing.value = false
-                    _syncStatusMessage.value = "Sync error: ${e.localizedMessage ?: "Unknown"}"
-                    Toast.makeText(context, "Sync error: ${e.message}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(appContext, "Sync error: ${e.message}", Toast.LENGTH_SHORT).show()
                     onComplete?.invoke(false, e.message ?: "Failed")
                 }
+            } finally {
+                _isSyncing.value = false
             }
         }
     }
@@ -516,73 +527,84 @@ object GoogleDriveSyncManager {
     }
 
     /**
-     * Simulates restoring or pulling notes from Google Drive container into the local workspace.
+     * Restores notes from the local Google Drive staging backup into the Room workspace.
      */
     fun performRestore(
         context: Context,
         scope: CoroutineScope,
         onComplete: ((success: Boolean, message: String) -> Unit)? = null
     ) {
-        initialize(context)
+        val appContext = context.applicationContext
+        initialize(appContext)
         _isSyncing.value = true
-        _syncStatusMessage.value = "Restoring notes from Google Drive..."
+        _syncStatusMessage.value = "Restoring notes from backup..."
 
         scope.launch(Dispatchers.IO) {
             try {
-                val backupDir = File(context.filesDir, "google_drive_sync")
-                val backupFile = File(backupDir, "workspace_drive_backup.json")
+                val restoredCount = syncMutex.lock().let {
+                    try {
+                        val backupDir = File(appContext.filesDir, "google_drive_sync")
+                        val backupFile = File(backupDir, "workspace_drive_backup.json")
 
-                var restoredCount = 0
-                if (backupFile.exists()) {
-                    val content = backupFile.readText()
-                    val json = JSONObject(content)
-                    val itemsArray = json.optJSONArray("items")
-                    if (itemsArray != null) {
-                        val db = WorkspaceDatabase.getDatabase(context)
-                        val itemsToInsert = mutableListOf<WorkspaceItem>()
-                        for (i in 0 until itemsArray.length()) {
-                            val obj = itemsArray.getJSONObject(i)
-                            itemsToInsert.add(
-                                WorkspaceItem(
-                                    id = obj.getString("id"),
-                                    name = obj.getString("name"),
-                                    kind = obj.getString("kind"),
-                                    text = obj.optString("text", ""),
-                                    tags = obj.optString("tags", ""),
-                                    isPinned = obj.optBoolean("isPinned", false),
-                                    modifiedTimestamp = obj.optLong("modifiedTimestamp", System.currentTimeMillis()),
-                                    parentId = if (obj.has("parentId") && !obj.isNull("parentId")) obj.getString("parentId") else null
-                                )
-                            )
+                        if (backupFile.exists()) {
+                            val content = backupFile.readText()
+                            val json = JSONObject(content)
+                            val itemsArray = json.optJSONArray("items")
+                            if (itemsArray != null) {
+                                val db = WorkspaceDatabase.getDatabase(appContext)
+                                val itemsToInsert = mutableListOf<WorkspaceItem>()
+                                for (i in 0 until itemsArray.length()) {
+                                    val obj = itemsArray.getJSONObject(i)
+                                    val text = obj.optString("text", "")
+                                    itemsToInsert.add(
+                                        WorkspaceItem(
+                                            id = obj.getString("id"),
+                                            name = obj.getString("name"),
+                                            kind = obj.getString("kind"),
+                                            text = text,
+                                            fileType = obj.optString("fileType", ""),
+                                            fileUri = if (obj.has("fileUri") && !obj.isNull("fileUri")) obj.getString("fileUri") else null,
+                                            tags = obj.optString("tags", ""),
+                                            isPinned = obj.optBoolean("isPinned", false),
+                                            modifiedTimestamp = obj.optLong("modifiedTimestamp", System.currentTimeMillis()),
+                                            size = obj.optLong("size", text.length.toLong()),
+                                            parentId = if (obj.has("parentId") && !obj.isNull("parentId")) obj.getString("parentId") else null
+                                        )
+                                    )
+                                }
+                                db.workspaceDao().insertItems(itemsToInsert)
+                                itemsToInsert.size
+                            } else 0
+                        } else {
+                            WorkspaceDatabase.getDatabase(appContext).workspaceDao().countAll()
                         }
-                        db.workspaceDao().insertItems(itemsToInsert)
-                        restoredCount = itemsToInsert.size
+                    } finally {
+                        syncMutex.unlock()
                     }
-                } else {
-                    val db = WorkspaceDatabase.getDatabase(context)
-                    restoredCount = db.workspaceDao().countAll()
                 }
 
                 val now = System.currentTimeMillis()
                 _lastSyncTimestamp.value = now
                 _notesLastSyncTime.value = now
                 _syncedItemsCount.value = restoredCount
-                getPrefs(context).edit().putLong(KEY_LAST_SYNC, now).apply()
+                getPrefs(appContext).edit().putLong(KEY_LAST_SYNC, now).apply()
 
-                _syncStatusMessage.value = "Restored $restoredCount workspace notes from Google Drive"
+                _syncStatusMessage.value = "Restored $restoredCount workspace notes"
 
                 withContext(Dispatchers.Main) {
-                    _isSyncing.value = false
-                    Toast.makeText(context, "Restored $restoredCount notes from Google Drive", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(appContext, "Restored $restoredCount workspace notes", Toast.LENGTH_SHORT).show()
                     onComplete?.invoke(true, "Restored $restoredCount items")
                 }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
+                _syncStatusMessage.value = "Restore failed: ${e.localizedMessage ?: "Unknown error"}"
                 withContext(Dispatchers.Main) {
-                    _isSyncing.value = false
-                    _syncStatusMessage.value = "Restore failed: ${e.localizedMessage ?: "Unknown error"}"
-                    Toast.makeText(context, "Drive restore error: ${e.message}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(appContext, "Restore error: ${e.message}", Toast.LENGTH_SHORT).show()
                     onComplete?.invoke(false, e.message ?: "Restore failed")
                 }
+            } finally {
+                _isSyncing.value = false
             }
         }
     }
@@ -595,29 +617,36 @@ object GoogleDriveSyncManager {
     }
 
     fun createCategoryShareIntent(context: Context, category: DriveSyncCategory): Intent {
-        val backupDir = File(context.filesDir, "google_drive_sync")
+        val backupDir = File(context.filesDir, "google_drive_sync").apply { mkdirs() }
         val fileName = when (category) {
             DriveSyncCategory.NOTES -> "workspace_drive_backup.json"
             DriveSyncCategory.PHOTOS -> "photos_snapshots_drive_backup.json"
             DriveSyncCategory.VIDEOS -> "ai_videos_drive_backup.json"
         }
         val backupFile = File(backupDir, fileName)
-        val content = if (backupFile.exists()) {
-            backupFile.readText()
-        } else {
-            "{\"backup\": \"ATHENA ${category.title}\", \"drive_folder\": \"${category.driveFolder}\", \"timestamp\": ${System.currentTimeMillis()}}"
+        if (!backupFile.exists()) {
+            backupFile.writeText(
+                "{\"backup\": \"ATHENA ${category.title}\", \"drive_folder\": \"${category.driveFolder}\", \"timestamp\": ${System.currentTimeMillis()}}"
+            )
         }
 
-        return Intent().apply {
-            action = Intent.ACTION_SEND
-            putExtra(Intent.EXTRA_SUBJECT, "ATHENA ${category.title} Google Drive Backup")
-            putExtra(Intent.EXTRA_TEXT, content)
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            backupFile
+        )
+
+        return Intent(Intent.ACTION_SEND).apply {
             type = "application/json"
+            putExtra(Intent.EXTRA_SUBJECT, "ATHENA ${category.title} Google Drive Backup")
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = android.content.ClipData.newRawUri(backupFile.name, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }
 
     /**
-     * Launches the Google Drive app or falls back to the browser.
+     * Launches the Google Drive app or falls back safely to the browser.
      */
     fun openGoogleDrive(context: Context) {
         val driveUri = Uri.parse("https://drive.google.com/drive/my-drive")
@@ -628,10 +657,12 @@ object GoogleDriveSyncManager {
         try {
             context.startActivity(driveIntent)
         } catch (e: Exception) {
-            val webIntent = Intent(Intent.ACTION_VIEW, driveUri).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            runCatching {
+                val webIntent = Intent(Intent.ACTION_VIEW, driveUri).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(webIntent)
             }
-            context.startActivity(webIntent)
         }
     }
 
@@ -639,8 +670,9 @@ object GoogleDriveSyncManager {
      * Called when a note is created or updated to trigger instant auto-sync if active.
      */
     fun onNoteCreatedOrUpdated(context: Context, scope: CoroutineScope) {
-        if (_isAutoSyncEnabled.value && _notesAutoSyncEnabled.value) {
-            performCategorySync(context, DriveSyncCategory.NOTES, scope)
+        initialize(context)
+        if (_isAutoSyncEnabled.value && _notesAutoSyncEnabled.value && canAutoSyncUnderNetworkPolicy(context)) {
+            performCategorySync(context, DriveSyncCategory.NOTES, scope, showToast = false)
         }
     }
 
@@ -648,8 +680,9 @@ object GoogleDriveSyncManager {
      * Called when a snapshot or photo is saved to trigger instant auto-sync if active.
      */
     fun onPhotoCaptured(context: Context, scope: CoroutineScope) {
-        if (_isAutoSyncEnabled.value && _photosAutoSyncEnabled.value) {
-            performCategorySync(context, DriveSyncCategory.PHOTOS, scope)
+        initialize(context)
+        if (_isAutoSyncEnabled.value && _photosAutoSyncEnabled.value && canAutoSyncUnderNetworkPolicy(context)) {
+            performCategorySync(context, DriveSyncCategory.PHOTOS, scope, showToast = false)
         }
     }
 }

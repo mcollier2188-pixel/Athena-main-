@@ -44,10 +44,28 @@ object CreativeHubAiService {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    fun getStoredApiKey(context: Context): String {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val customKey = prefs.getString(KEY_CUSTOM_API_KEY, "")?.trim() ?: ""
-        if (customKey.isNotBlank()) return customKey
+    @Volatile
+    private var cachedCustomKey: String = ""
+
+    private fun resolveRestModelId(requested: String): String {
+        return when (requested) {
+            "gemini-3.5-flash" -> "gemini-2.5-flash"
+            "gemini-nano-banana-2.1" -> "gemini-2.5-flash-image"
+            else -> requested
+        }
+    }
+
+    fun resolveEffectiveApiKey(context: Context? = null): String {
+        if (context != null) {
+            val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val customKey = prefs.getString(KEY_CUSTOM_API_KEY, "")?.trim().orEmpty()
+            if (customKey.isNotBlank()) {
+                cachedCustomKey = customKey
+                return customKey
+            }
+        } else if (cachedCustomKey.isNotBlank()) {
+            return cachedCustomKey
+        }
 
         return try {
             val buildKey = BuildConfig.GEMINI_API_KEY.trim()
@@ -61,9 +79,13 @@ object CreativeHubAiService {
         }
     }
 
+    fun getStoredApiKey(context: Context): String = resolveEffectiveApiKey(context)
+
     fun saveCustomApiKey(context: Context, key: String) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_CUSTOM_API_KEY, key.trim()).apply()
+        val trimmed = key.trim()
+        cachedCustomKey = trimmed
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_CUSTOM_API_KEY, trimmed).apply()
     }
 
     fun isOnlineConfigured(context: Context): Boolean {
@@ -74,7 +96,7 @@ object CreativeHubAiService {
         context: Context,
         prompt: String,
         history: List<CreativeMessage> = emptyList(),
-        model: String = "gemini-3.5-flash",
+        model: String = "gemini-2.5-flash",
         systemInstruction: String? = null,
         temperature: Double = 0.7,
         topP: Double = 0.95,
@@ -85,10 +107,11 @@ object CreativeHubAiService {
         val apiKey = getStoredApiKey(context)
         val startTime = System.currentTimeMillis()
         val trimmedPrompt = prompt.trim()
+        val restModel = resolveRestModelId(model)
 
         if (apiKey.isNotBlank()) {
             try {
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse&key=$apiKey"
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$restModel:streamGenerateContent?alt=sse"
                 val contentsArray = JSONArray()
 
                 val recentHistory = history.takeLast(8)
@@ -137,50 +160,58 @@ object CreativeHubAiService {
 
                 val request = Request.Builder()
                     .url(endpoint)
+                    .addHeader("x-goog-api-key", apiKey)
                     .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                val response = httpClient.newCall(request).execute()
-                if (response.isSuccessful) {
-                    val fullText = StringBuilder()
-                    response.body?.charStream()?.buffered()?.use { reader ->
-                        reader.forEachLine { line ->
-                            val trimmed = line.trim()
-                            if (trimmed.startsWith("data:")) {
-                                val jsonStr = trimmed.removePrefix("data:").trim()
-                                if (jsonStr.isNotBlank() && jsonStr != "[DONE]") {
-                                    try {
-                                        val root = JSONObject(jsonStr)
-                                        val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
-                                        val text = candidate?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text")
-                                        if (!text.isNullOrEmpty()) {
-                                            fullText.append(text)
-                                            onChunk(text)
-                                        }
-                                    } catch (_: Exception) {}
+                val streamJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
+                httpClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val fullText = StringBuilder()
+                        response.body?.charStream()?.buffered()?.use { reader ->
+                            reader.forEachLine { line ->
+                                if (streamJob?.isActive == false) {
+                                    throw kotlinx.coroutines.CancellationException("Stream cancelled")
+                                }
+                                val trimmed = line.trim()
+                                if (trimmed.startsWith("data:")) {
+                                    val jsonStr = trimmed.removePrefix("data:").trim()
+                                    if (jsonStr.isNotBlank() && jsonStr != "[DONE]") {
+                                        try {
+                                            val root = JSONObject(jsonStr)
+                                            val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
+                                            val text = candidate?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text")
+                                            if (!text.isNullOrEmpty()) {
+                                                fullText.append(text)
+                                                onChunk(text)
+                                            }
+                                        } catch (_: Exception) {}
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    if (fullText.isNotBlank()) {
-                        val latency = System.currentTimeMillis() - startTime
-                        val totalChars = fullText.length
-                        val estimatedTokens = (totalChars / 4).coerceAtLeast(1)
-                        val tokensPerSec = if (latency > 0) (estimatedTokens.toFloat() / (latency.toFloat() / 1000f)) else 0f
+                        if (fullText.isNotBlank()) {
+                            val latency = System.currentTimeMillis() - startTime
+                            val totalChars = fullText.length
+                            val estimatedTokens = (totalChars / 4).coerceAtLeast(1)
+                            val tokensPerSec = if (latency > 0) (estimatedTokens.toFloat() / (latency.toFloat() / 1000f)) else 0f
 
-                        return@withContext CreativeMessage(
-                            role = "model",
-                            text = fullText.toString(),
-                            modelTag = if (model.contains("pro")) "Gemini 3.1 Pro" else "Gemini 3.5 Flash",
-                            isOnline = true,
-                            promptTokens = (trimmedPrompt.length / 4).coerceAtLeast(1),
-                            responseTokens = estimatedTokens,
-                            latencyMs = latency,
-                            tokensPerSec = tokensPerSec
-                        )
+                            return@withContext CreativeMessage(
+                                role = "model",
+                                text = fullText.toString(),
+                                modelTag = if (restModel.contains("pro")) "Gemini 2.5 Pro" else "Gemini 2.5 Flash",
+                                isOnline = true,
+                                promptTokens = (trimmedPrompt.length / 4).coerceAtLeast(1),
+                                responseTokens = estimatedTokens,
+                                latencyMs = latency,
+                                tokensPerSec = tokensPerSec
+                            )
+                        }
                     }
                 }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Streaming API failed, falling back: ${e.message}")
             }
@@ -203,8 +234,8 @@ object CreativeHubAiService {
         return@withContext CreativeMessage(
             role = "model",
             text = fullText.toString(),
-            modelTag = if (apiKey.isNotBlank()) "Gemini 3.5 Flash" else "Athena Local Neural",
-            isOnline = apiKey.isNotBlank(),
+            modelTag = "Athena Local Neural",
+            isOnline = false,
             promptTokens = (trimmedPrompt.length / 4).coerceAtLeast(1),
             responseTokens = estimatedTokens,
             latencyMs = latency,
@@ -216,12 +247,13 @@ object CreativeHubAiService {
         context: Context,
         prompt: String,
         history: List<CreativeMessage> = emptyList(),
-        model: String = "gemini-3.5-flash",
+        model: String = "gemini-2.5-flash",
         enableGoogleSearch: Boolean = false,
         creativeTone: String = "Imaginative & Helpful"
     ): CreativeMessage = withContext(Dispatchers.IO) {
         val apiKey = getStoredApiKey(context)
         val trimmedPrompt = prompt.trim()
+        val restModel = resolveRestModelId(model)
 
         if (apiKey.isNotBlank()) {
             try {
@@ -229,23 +261,26 @@ object CreativeHubAiService {
                     apiKey = apiKey,
                     prompt = trimmedPrompt,
                     history = history,
-                    model = model,
+                    model = restModel,
                     enableGoogleSearch = enableGoogleSearch,
                     creativeTone = creativeTone
                 )
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Live Gemini call failed, retrying without tools or falling back: ${e.message}")
-                // If it failed with tools (e.g. googleSearch), retry cleanly without tools
                 if (enableGoogleSearch) {
                     try {
                         return@withContext callLiveGeminiApi(
                             apiKey = apiKey,
                             prompt = trimmedPrompt,
                             history = history,
-                            model = model,
+                            model = restModel,
                             enableGoogleSearch = false,
                             creativeTone = creativeTone
                         )
+                    } catch (e2: kotlin.coroutines.cancellation.CancellationException) {
+                        throw e2
                     } catch (e2: Exception) {
                         Log.e(TAG, "Retry without tools also failed: ${e2.message}")
                     }
@@ -253,7 +288,6 @@ object CreativeHubAiService {
             }
         }
 
-        // Responsive Open-Domain Creative Generator (never locked to offline geology data)
         return@withContext generateOpenDomainCreativeResponse(trimmedPrompt, creativeTone)
     }
 
@@ -265,11 +299,10 @@ object CreativeHubAiService {
         enableGoogleSearch: Boolean,
         creativeTone: String
     ): CreativeMessage {
-        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
 
         val contentsArray = JSONArray()
 
-        // Include recent conversation turns for contextual chat
         val recentHistory = history.takeLast(8)
         for (msg in recentHistory) {
             val partObj = JSONObject().put("text", msg.text)
@@ -280,7 +313,6 @@ object CreativeHubAiService {
             contentsArray.put(contentObj)
         }
 
-        // Add current user prompt
         contentsArray.put(JSONObject().apply {
             put("role", "user")
             put("parts", JSONArray().put(JSONObject().put("text", prompt)))
@@ -309,14 +341,16 @@ object CreativeHubAiService {
 
         val request = Request.Builder()
             .url(endpoint)
+            .addHeader("x-goog-api-key", apiKey)
             .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
-        val response = httpClient.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
-
-        if (!response.isSuccessful) {
-            throw RuntimeException("Gemini API HTTP ${response.code}: $responseBody")
+        val responseBody = httpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) {
+                throw RuntimeException("Gemini API HTTP ${response.code}: $body")
+            }
+            body
         }
 
         val rootJson = JSONObject(responseBody)

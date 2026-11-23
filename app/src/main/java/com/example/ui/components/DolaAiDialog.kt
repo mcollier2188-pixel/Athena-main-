@@ -492,6 +492,7 @@ fun DolaAiDialog(
                             ),
                             label = "phase"
                         )
+                        val echoColors = com.example.ui.theme.LocalEchoColors.current
                         Canvas(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -507,7 +508,7 @@ fun DolaAiDialog(
                                 val amp = if (isSpeaking) 8f else 11f
                                 val y = midY + kotlin.math.sin(wavePhase + i * 0.45f).toFloat() * amp
                                 drawCircle(
-                                    color = if (i % 2 == 0) EchoCyan else EchoGreen,
+                                    color = if (i % 2 == 0) echoColors.cyan else echoColors.green,
                                     radius = 2.8.dp.toPx(),
                                     center = androidx.compose.ui.geometry.Offset(x, y)
                                 )

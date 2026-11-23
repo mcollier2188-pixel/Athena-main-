@@ -256,6 +256,7 @@ fun ProtocolTimer30sView(
                 val secondsDisplay = String.format(Locale.US, "%02d.%d", remainingTenths / 10, remainingTenths % 10)
 
                 // Big Circular Dial with Ring and Center Text
+                val echoColors = com.example.ui.theme.LocalEchoColors.current
                 Box(
                     modifier = Modifier.size(240.dp),
                     contentAlignment = Alignment.Center
@@ -267,7 +268,7 @@ fun ProtocolTimer30sView(
 
                         // Background Track
                         drawCircle(
-                            color = EchoDarkSurface,
+                            color = echoColors.darkSurface,
                             radius = radius,
                             center = center,
                             style = Stroke(width = strokeWidth)
@@ -277,7 +278,7 @@ fun ProtocolTimer30sView(
                         val sweepAngle = progressFraction * 360f
                         drawArc(
                             brush = Brush.sweepGradient(
-                                listOf(EchoCyan, Gold85Hz, EchoCyan)
+                                listOf(echoColors.cyan, Gold85Hz, echoColors.cyan)
                             ),
                             startAngle = -90f,
                             sweepAngle = sweepAngle,
@@ -338,7 +339,7 @@ fun ProtocolTimer30sView(
 
                         drawPath(
                             path = wavePath,
-                            color = if (isRunning) Gold85Hz else EchoCyan.copy(alpha = 0.5f),
+                            color = if (isRunning) Gold85Hz else echoColors.cyan.copy(alpha = 0.5f),
                             style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
                         )
                     }

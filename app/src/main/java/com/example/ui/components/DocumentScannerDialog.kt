@@ -8,6 +8,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.util.Base64
 import android.widget.Toast
@@ -162,13 +163,21 @@ fun DocumentScannerDialog(
     var isFlashOn by remember { mutableStateOf(false) }
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var cameraControl by remember { mutableStateOf<androidx.camera.core.CameraControl?>(null) }
+    var cameraProviderRef by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
     // Analysis Pipeline state
     var isCapturing by remember { mutableStateOf(false) }
     var isAnalyzing by remember { mutableStateOf(false) }
     var processingStage by remember { mutableStateOf("Initializing optics...") }
-    var capturedPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching { cameraControl?.enableTorch(false) }
+            runCatching { cameraProviderRef?.unbindAll() }
+            cameraExecutor.shutdown()
+        }
+    }
 
     // Holographic scanline animation
     val infiniteTransition = rememberInfiniteTransition(label = "scanner_laser")
@@ -255,19 +264,20 @@ fun DocumentScannerDialog(
                         }
                         val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                         cameraProviderFuture.addListener({
-                            val cameraProvider = cameraProviderFuture.get()
-                            val preview = Preview.Builder().build().also {
-                                it.surfaceProvider = previewView.surfaceProvider
-                            }
-
-                            val capture = ImageCapture.Builder()
-                                .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-                                .build()
-                            imageCapture = capture
-
-                            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
                             try {
+                                val cameraProvider = cameraProviderFuture.get()
+                                cameraProviderRef = cameraProvider
+                                val preview = Preview.Builder().build().also {
+                                    it.surfaceProvider = previewView.surfaceProvider
+                                }
+
+                                val capture = ImageCapture.Builder()
+                                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                                    .build()
+                                imageCapture = capture
+
+                                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
                                 cameraProvider.unbindAll()
                                 val camera = cameraProvider.bindToLifecycle(
                                     lifecycleOwner,
@@ -457,21 +467,29 @@ fun DocumentScannerDialog(
                                             scope.launch {
                                                 toneGenerator.playChime(SoundEffectType.CHIME)
                                                 processingStage = "Applying automated contrast enhancement..."
-                                                val rawBitmap = imageProxyToBitmap(imageProxy)
-                                                imageProxy.close()
+                                                val base64Jpeg = withContext(Dispatchers.Default) {
+                                                    val rawBitmap = try {
+                                                        imageProxyToBitmap(imageProxy)
+                                                    } finally {
+                                                        imageProxy.close()
+                                                    }
+                                                    val enhancedBitmap = try {
+                                                        enhanceDocumentContrast(rawBitmap)
+                                                    } finally {
+                                                        rawBitmap.recycle()
+                                                    }
+                                                    try {
+                                                        val stream = ByteArrayOutputStream()
+                                                        enhancedBitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+                                                        Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+                                                    } finally {
+                                                        enhancedBitmap.recycle()
+                                                    }
+                                                }
 
-                                                val enhancedBitmap = enhanceDocumentContrast(rawBitmap)
-                                                capturedPreviewBitmap = enhancedBitmap
                                                 isCapturing = false
                                                 isAnalyzing = true
                                                 processingStage = "Multimodal AI extraction & paradox analysis..."
-
-                                                // Encode to Base64
-                                                val base64Jpeg = withContext(Dispatchers.IO) {
-                                                    val stream = ByteArrayOutputStream()
-                                                    enhancedBitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
-                                                    Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
-                                                }
 
                                                 // Call multimodal analysis via Gemini
                                                 val analysisResult = AthenaService.analyzeDocumentOrImage(
@@ -600,14 +618,22 @@ fun DocumentScannerDialog(
 }
 
 /**
- * Convert ImageProxy to Bitmap safely.
+ * Convert ImageProxy to Bitmap safely, respecting CameraX sensor rotationDegrees.
  */
 private fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap {
+    val rotationDegrees = imageProxy.imageInfo.rotationDegrees
     val buffer: ByteBuffer = imageProxy.planes[0].buffer
     val bytes = ByteArray(buffer.remaining())
     buffer.get(bytes)
-    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        ?: Bitmap.createBitmap(800, 600, Bitmap.Config.ARGB_8888)
+    val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        ?: return Bitmap.createBitmap(800, 600, Bitmap.Config.ARGB_8888)
+    if (rotationDegrees == 0) return decoded
+    val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+    val rotated = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+    if (rotated !== decoded) {
+        decoded.recycle()
+    }
+    return rotated
 }
 
 /**
@@ -641,7 +667,7 @@ private fun enhanceDocumentContrast(src: Bitmap): Bitmap {
 /**
  * Extracts a concise debate theorem from the multimodal analysis output.
  */
-private fun extractDebateTopic(analysisText: String): String {
+internal fun extractDebateTopic(analysisText: String): String {
     val lines = analysisText.lines()
     for (line in lines) {
         val lower = line.lowercase()

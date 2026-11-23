@@ -733,7 +733,7 @@ private fun WorkspacesSection(
     } else {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             projects.forEach { project ->
-                val colorTag = parseColorHex(project.colorTagHex)
+                val colorTag = parseColorHex(project.colorTagHex, EchoCyan)
                 val dateStr = dateFormat.format(Date(project.createdAt))
 
                 Card(
@@ -1104,7 +1104,7 @@ private fun ProjectUpsertDialog(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     presetColors.forEach { hex ->
-                        val color = parseColorHex(hex)
+                        val color = parseColorHex(hex, EchoCyan)
                         val isSelected = selectedColorHex.equals(hex, ignoreCase = true)
 
                         Box(
@@ -1156,7 +1156,7 @@ private fun ProjectUpsertDialog(
     )
 }
 
-private fun parseColorHex(hex: String): Color {
+private fun parseColorHex(hex: String, fallback: Color = com.example.ui.theme.DarkEchoColors.cyan): Color {
     return try {
         val cleanHex = hex.removePrefix("#")
         val colorInt = cleanHex.toLong(16)
@@ -1166,6 +1166,6 @@ private fun parseColorHex(hex: String): Color {
             Color(colorInt)
         }
     } catch (e: Exception) {
-        EchoCyan
+        fallback
     }
 }

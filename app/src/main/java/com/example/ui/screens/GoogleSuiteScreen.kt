@@ -66,6 +66,8 @@ import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Language
 import com.example.auth.ConnectedAccountsManager
@@ -299,17 +301,27 @@ fun GoogleSuiteScreen(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     // Google / Connected Account Button
+                    val accountBtnColor = when {
+                        currentUser?.isGoogleConnected == true -> EchoGreen
+                        currentUser != null -> EchoAmber
+                        else -> EchoCyan
+                    }
+                    val accountBtnLabel = when {
+                        currentUser?.isGoogleConnected == true -> "Google: Verified"
+                        currentUser != null -> "Profile: Local"
+                        else -> "Sign In"
+                    }
                     OutlinedButton(
                         onClick = {
                             toneGenerator.playChime(SoundEffectType.TAP)
                             showAccountSheet = true
                         },
                         colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (currentUser != null) EchoGreen else EchoCyan
+                            contentColor = accountBtnColor
                         ),
                         border = androidx.compose.foundation.BorderStroke(
                             1.dp,
-                            if (currentUser != null) EchoGreen.copy(alpha = 0.5f) else EchoCyan.copy(alpha = 0.5f)
+                            accountBtnColor.copy(alpha = 0.5f)
                         ),
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
@@ -322,7 +334,7 @@ fun GoogleSuiteScreen(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = if (currentUser != null) "Google: Linked" else "Sign In",
+                            text = accountBtnLabel,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -554,7 +566,7 @@ fun GoogleSuiteScreen(
     // System Preferences & Diagnostics Dialog
     if (showInternalPreferencesDialog) {
         SettingsDialog(
-            isDarkTheme = true,
+            isDarkTheme = com.example.ui.theme.LocalEchoColors.current.isDark,
             onToggleDarkTheme = {},
             onRequestExitApp = {},
             onDismiss = { showInternalPreferencesDialog = false }
@@ -1353,10 +1365,14 @@ fun CreativeYouTubeTab(
             }
             context.startActivity(intent)
         } catch (_: Exception) {
-            val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            try {
+                val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(webIntent)
+            } catch (_: Exception) {
+                Toast.makeText(context, "No browser or YouTube app available", Toast.LENGTH_SHORT).show()
             }
-            context.startActivity(webIntent)
         }
     }
 
@@ -2157,33 +2173,37 @@ fun CreativeYouTubeTab(
                         val parsedId = extractPlaylistId(inputUrlOrId)
                         if (parsedId.isNotBlank()) {
                             toneGenerator.playChime(SoundEffectType.SUCCESS)
-                            val fallbackSample = "dQw4w9WgXcQ"
+                            val fallbackSample = "jfKfPfyJRdk"
                             val newPlTitle = inputTitle.ifBlank { "Custom Playlist (${parsedId.take(8)})" }
-                            playlists.add(
-                                0,
-                                CreativePlaylistItem(
-                                    id = parsedId,
-                                    title = newPlTitle,
-                                    author = "My Playlists",
-                                    videoCount = "1 Track",
-                                    description = inputDesc.ifBlank { "Custom user playlist added via YouTube Link/ID: $parsedId" },
-                                    sampleVideoId = fallbackSample,
-                                    isCustom = true,
-                                    videos = listOf(
-                                        CreativeVideoItem(
-                                            id = "trk_${System.currentTimeMillis()}",
-                                            title = "$newPlTitle — Primary Track",
-                                            channel = "YouTube Creator",
-                                            duration = "Featured Stream",
-                                            views = "Playlist Item",
-                                            category = "Playlist Track",
-                                            summary = "Stream from playlist $parsedId",
-                                            youtubeVideoId = fallbackSample
-                                        )
+                            val newItem = CreativePlaylistItem(
+                                id = parsedId,
+                                title = newPlTitle,
+                                author = "My Playlists",
+                                videoCount = "1 Track",
+                                description = inputDesc.ifBlank { "Custom user playlist added via YouTube Link/ID: $parsedId" },
+                                sampleVideoId = fallbackSample,
+                                isCustom = true,
+                                videos = listOf(
+                                    CreativeVideoItem(
+                                        id = "trk_${System.currentTimeMillis()}",
+                                        title = "$newPlTitle — Primary Track",
+                                        channel = "YouTube Creator",
+                                        duration = "Featured Stream",
+                                        views = "Playlist Item",
+                                        category = "Playlist Track",
+                                        summary = "Stream from playlist $parsedId",
+                                        youtubeVideoId = fallbackSample
                                     )
                                 )
                             )
-                            Toast.makeText(context, "Playlist added successfully!", Toast.LENGTH_SHORT).show()
+                            val existingIdx = playlists.indexOfFirst { it.id == parsedId }
+                            if (existingIdx >= 0) {
+                                playlists[existingIdx] = newItem
+                                Toast.makeText(context, "Playlist updated!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                playlists.add(0, newItem)
+                                Toast.makeText(context, "Playlist added successfully!", Toast.LENGTH_SHORT).show()
+                            }
                             showAddPlaylistDialog = false
                         } else {
                             Toast.makeText(context, "Please enter a valid playlist ID or link", Toast.LENGTH_SHORT).show()
@@ -2410,9 +2430,9 @@ fun CreativeStudioTab(
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            val userEmail = currentUser?.email ?: "mcollier2188@gmail.com"
+                            val statusLabel = currentUser?.email?.let { "Connected: $it" } ?: "Local Mode (Sign in to link Cloud)"
                             Text(
-                                text = "Connected: $userEmail",
+                                text = statusLabel,
                                 color = EchoMuted,
                                 fontSize = 10.sp,
                                 fontFamily = FontFamily.Monospace
@@ -2911,9 +2931,30 @@ fun ApiKeySetupDialog(
                     lineHeight = 17.sp
                 )
 
+                var isKeyVisible by remember { mutableStateOf(false) }
+
                 OutlinedTextField(
                     value = inputKey,
                     onValueChange = { inputKey = it },
+                    singleLine = true,
+                    visualTransformation = if (isKeyVisible) {
+                        androidx.compose.ui.text.input.VisualTransformation.None
+                    } else {
+                        androidx.compose.ui.text.input.PasswordVisualTransformation()
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = { isKeyVisible = !isKeyVisible }) {
+                            Icon(
+                                imageVector = if (isKeyVisible) {
+                                    androidx.compose.material.icons.Icons.Filled.VisibilityOff
+                                } else {
+                                    androidx.compose.material.icons.Icons.Filled.Visibility
+                                },
+                                contentDescription = if (isKeyVisible) "Hide API Key" else "Show API Key",
+                                tint = EchoMuted
+                            )
+                        }
+                    },
                     placeholder = { Text("Paste your Gemini API key (AIzaSy...)", color = EchoMuted) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(

@@ -245,7 +245,11 @@ fun GeminiPlaygroundTab(
         modelTag = "Gemini 3.5 Flash",
         isOnline = true
     )
-    val branches = remember { mutableStateListOf(mutableListOf(initialMessage)) }
+    val branches = remember {
+        mutableStateListOf<androidx.compose.runtime.snapshots.SnapshotStateList<CreativeMessage>>(
+            mutableStateListOf(initialMessage)
+        )
+    }
     var currentBranchIndex by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val chatMessages = branches.getOrElse(currentBranchIndex) { branches[0] }
 
@@ -258,7 +262,9 @@ fun GeminiPlaygroundTab(
         } else {
             currentList
         }
-        val copied = subList.map { it.copy(id = java.util.UUID.randomUUID().toString()) }.toMutableList()
+        val copied = mutableStateListOf<CreativeMessage>().apply {
+            addAll(subList.map { it.copy(id = java.util.UUID.randomUUID().toString()) })
+        }
         branches.add(copied)
         currentBranchIndex = branches.size - 1
         Toast.makeText(context, "Branched to Alternative Path #${branches.size}", Toast.LENGTH_SHORT).show()
@@ -1088,7 +1094,9 @@ fun GeminiPlaygroundTab(
 
                             try {
                                 val base64Pair = if (mediaUriToSave != null) {
-                                    getBase64FromUri(context, mediaUriToSave)
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        getBase64FromUri(context, mediaUriToSave)
+                                    }
                                 } else null
 
                                 val accumulated = StringBuilder()
@@ -1136,6 +1144,8 @@ fun GeminiPlaygroundTab(
                                     )
                                     Toast.makeText(context, "Auto-pushed to Workspace Notes!", Toast.LENGTH_SHORT).show()
                                 }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
                             } catch (e: Exception) {
                                 if (modelMsgIndex in chatMessages.indices) {
                                     chatMessages[modelMsgIndex] = CreativeMessage(
@@ -1146,7 +1156,9 @@ fun GeminiPlaygroundTab(
                                 }
                             } finally {
                                 isLoading = false
-                                listState.animateScrollToItem(chatMessages.size - 1)
+                                if (chatMessages.isNotEmpty()) {
+                                    listState.animateScrollToItem(chatMessages.size - 1)
+                                }
                             }
                         }
                     }

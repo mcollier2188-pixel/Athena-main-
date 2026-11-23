@@ -489,6 +489,7 @@ fun BioScienceLabView(
                         .background(EchoDarkSurface)
                         .border(1.dp, EchoCardStroke, RoundedCornerShape(12.dp))
                 ) {
+                    val echoColors = com.example.ui.theme.LocalEchoColors.current
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val w = size.width
                         val h = size.height
@@ -497,7 +498,7 @@ fun BioScienceLabView(
                         val dx = w / points
 
                         // Grid lines
-                        val gridColor = Color(0xFF1E2A38)
+                        val gridColor = if (echoColors.isDark) Color(0xFF1E2A38) else echoColors.cardStroke
                         for (i in 1..3) {
                             val y = h * (i / 4f)
                             drawLine(gridColor, Offset(0f, y), Offset(w, y), strokeWidth = 1f)
@@ -533,7 +534,7 @@ fun BioScienceLabView(
                         }
                         drawPath(
                             path = carrierPath,
-                            color = EchoCyan.copy(alpha = 0.45f),
+                            color = echoColors.cyan.copy(alpha = 0.45f),
                             style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round)
                         )
                     }

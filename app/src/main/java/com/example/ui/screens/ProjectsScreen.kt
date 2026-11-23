@@ -112,8 +112,14 @@ import com.example.ui.components.CinemaVideoSource
 private val CinemaTeal = Color(0xFF00D9C0)
 private val CinemaGreen = Color(0xFF66BB6A)
 private val CinemaGold = Color(0xFFE6C875)
-private val CinemaPanel = Color(0xFF161925)
-private val CinemaCardBg = Color(0xFF1A1D2B)
+private val CinemaPanel: Color
+    @Composable
+    @androidx.compose.runtime.ReadOnlyComposable
+    get() = if (com.example.ui.theme.LocalEchoColors.current.isDark) Color(0xFF161925) else EchoBgAlt
+private val CinemaCardBg: Color
+    @Composable
+    @androidx.compose.runtime.ReadOnlyComposable
+    get() = if (com.example.ui.theme.LocalEchoColors.current.isDark) Color(0xFF1A1D2B) else EchoCard
 private val CinemaRed = Color(0xFFFF6B6B)
 private val CinemaBlue = Color(0xFF4D96FF)
 
@@ -1868,7 +1874,12 @@ private fun CinemaDetailDialog(
                 Text(text = item.meta, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = themeColor)
 
                 // Synopsis
-                Text(text = item.desc, fontSize = 13.sp, color = Color(0xFFDDDDDD), lineHeight = 18.sp)
+                Text(
+                    text = item.desc,
+                    fontSize = 13.sp,
+                    color = if (com.example.ui.theme.LocalEchoColors.current.isDark) Color(0xFFDDDDDD) else EchoText,
+                    lineHeight = 18.sp
+                )
 
                 // Quick Action Buttons
                 Row(
@@ -1935,7 +1946,7 @@ private fun CinemaDetailDialog(
                                 Text(
                                     text = ep.desc,
                                     fontSize = 11.sp,
-                                    color = Color(0xFFAAAAAA),
+                                    color = if (com.example.ui.theme.LocalEchoColors.current.isDark) Color(0xFFAAAAAA) else EchoMuted,
                                     lineHeight = 15.sp
                                 )
                             }
@@ -1995,7 +2006,11 @@ private fun resolveMimeFromName(name: String): String {
     }
 }
 
-private fun getMediaClassification(name: String, mime: String): Triple<String, ImageVector, Color> {
+private fun getMediaClassification(
+    name: String,
+    mime: String,
+    defaultColor: Color = com.example.ui.theme.DarkEchoColors.text
+): Triple<String, ImageVector, Color> {
     val lower = name.lowercase()
     return when {
         mime.startsWith("video/") || lower.endsWith(".mp4") || lower.endsWith(".webm") || lower.endsWith(".mkv") -> {
@@ -2014,7 +2029,7 @@ private fun getMediaClassification(name: String, mime: String): Triple<String, I
             Triple("Plain Text Script", Icons.Default.Description, CinemaGold)
         }
         else -> {
-            Triple("Attached File", Icons.Default.AttachFile, EchoText)
+            Triple("Attached File", Icons.Default.AttachFile, defaultColor)
         }
     }
 }

@@ -58,12 +58,13 @@ object NetworkConnectivityMonitor {
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 val caps = cm.getNetworkCapabilities(network)
+                val hasInternet = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false
                 val isValidated = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) ?: false
                 val isWifi = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ?: false
                 val isCellular = caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ?: false
                 trySend(
                     NetworkStatus(
-                        isConnected = true,
+                        isConnected = hasInternet && isValidated,
                         isWifi = isWifi,
                         isCellular = isCellular,
                         isValidated = isValidated

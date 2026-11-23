@@ -376,6 +376,7 @@ fun FrequencyHeatmapSlider(
             contentAlignment = Alignment.Center
         ) {
             // Background Canvas: Renders the thermal heatmap overlay behind the slider track
+            val echoColors = com.example.ui.theme.LocalEchoColors.current
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -391,13 +392,13 @@ fun FrequencyHeatmapSlider(
             ) {
                 when (visualMode) {
                     HeatmapVisualMode.GRADIENT_SPECTROGRAM -> {
-                        drawThermalGradientOverlay(bins, size, value, valueRange)
+                        drawThermalGradientOverlay(bins, size, value, valueRange, echoColors)
                     }
                     HeatmapVisualMode.HISTOGRAM_BARS -> {
-                        drawHistogramBarsOverlay(bins, size, value, valueRange)
+                        drawHistogramBarsOverlay(bins, size, value, valueRange, echoColors)
                     }
                     HeatmapVisualMode.COMPACT_HEATSTRIP -> {
-                        drawHeatStripOverlay(bins, size, value, valueRange)
+                        drawHeatStripOverlay(bins, size, value, valueRange, echoColors)
                     }
                 }
             }
@@ -586,7 +587,8 @@ private fun DrawScope.drawThermalGradientOverlay(
     bins: List<FrequencyHeatmapBin>,
     size: Size,
     currentValue: Float,
-    valueRange: ClosedFloatingPointRange<Float>
+    valueRange: ClosedFloatingPointRange<Float>,
+    echoColors: com.example.ui.theme.EchoColorPalette
 ) {
     val totalWidth = size.width
     val totalHeight = size.height
@@ -599,7 +601,7 @@ private fun DrawScope.drawThermalGradientOverlay(
     for (i in 0..4) {
         val x = totalWidth * (i / 4f)
         drawLine(
-            color = EchoCardStroke.copy(alpha = 0.5f),
+            color = echoColors.cardStroke.copy(alpha = 0.5f),
             start = Offset(x, 0f),
             end = Offset(x, totalHeight),
             strokeWidth = 1f
@@ -635,7 +637,7 @@ private fun DrawScope.drawThermalGradientOverlay(
     val rangeSpan = (valueRange.endInclusive - valueRange.start).coerceAtLeast(0.01f)
     val thumbX = ((currentValue - valueRange.start) / rangeSpan) * totalWidth
     drawLine(
-        color = EchoText,
+        color = echoColors.text,
         start = Offset(thumbX, 0f),
         end = Offset(thumbX, totalHeight),
         strokeWidth = 2f
@@ -649,7 +651,8 @@ private fun DrawScope.drawHistogramBarsOverlay(
     bins: List<FrequencyHeatmapBin>,
     size: Size,
     currentValue: Float,
-    valueRange: ClosedFloatingPointRange<Float>
+    valueRange: ClosedFloatingPointRange<Float>,
+    echoColors: com.example.ui.theme.EchoColorPalette
 ) {
     val totalWidth = size.width
     val totalHeight = size.height
@@ -676,7 +679,7 @@ private fun DrawScope.drawHistogramBarsOverlay(
         // Draw top cap glow if it's a hotspot
         if (bin.intensity > 0.7f) {
             drawCircle(
-                color = EchoRed,
+                color = echoColors.red,
                 radius = 2.5f,
                 center = Offset(x + w / 2f, y)
             )
@@ -687,7 +690,7 @@ private fun DrawScope.drawHistogramBarsOverlay(
     val rangeSpan = (valueRange.endInclusive - valueRange.start).coerceAtLeast(0.01f)
     val thumbX = ((currentValue - valueRange.start) / rangeSpan) * totalWidth
     drawLine(
-        color = EchoCyan,
+        color = echoColors.cyan,
         start = Offset(thumbX, 0f),
         end = Offset(thumbX, totalHeight),
         strokeWidth = 2f
@@ -701,7 +704,8 @@ private fun DrawScope.drawHeatStripOverlay(
     bins: List<FrequencyHeatmapBin>,
     size: Size,
     currentValue: Float,
-    valueRange: ClosedFloatingPointRange<Float>
+    valueRange: ClosedFloatingPointRange<Float>,
+    echoColors: com.example.ui.theme.EchoColorPalette
 ) {
     val totalWidth = size.width
     val totalHeight = size.height
@@ -723,7 +727,7 @@ private fun DrawScope.drawHeatStripOverlay(
     val rangeSpan = (valueRange.endInclusive - valueRange.start).coerceAtLeast(0.01f)
     val thumbX = ((currentValue - valueRange.start) / rangeSpan) * totalWidth
     drawLine(
-        color = EchoText,
+        color = echoColors.text,
         start = Offset(thumbX, 0f),
         end = Offset(thumbX, totalHeight),
         strokeWidth = 2f

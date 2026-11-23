@@ -193,14 +193,15 @@ fun WorkspaceQuickActionsMenu(
         label = "fab_rotation"
     )
 
-    val actions = remember(onNewNote, onStartRecording, onSnapshotCapture, onPasteNote, onDolaAi, onNewFolder, onCloudSync) {
+    val echoColors = com.example.ui.theme.LocalEchoColors.current
+    val actions = remember(echoColors, onNewNote, onStartRecording, onSnapshotCapture, onPasteNote, onDolaAi, onNewFolder, onCloudSync) {
         val list = mutableListOf(
             QuickActionItem(
                 id = "new_note",
                 title = "New Note",
                 subtitle = "Create workspace note",
                 icon = Icons.Default.EditNote,
-                accentColor = EchoCyan,
+                accentColor = echoColors.cyan,
                 testTag = "quick_action_new_note",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.TAP)
@@ -213,7 +214,7 @@ fun WorkspaceQuickActionsMenu(
                 title = "Start Recording",
                 subtitle = "Audio memo & sound note",
                 icon = Icons.Default.Mic,
-                accentColor = EchoRed,
+                accentColor = echoColors.red,
                 testTag = "quick_action_start_recording",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.HARMONIC_PING)
@@ -226,7 +227,7 @@ fun WorkspaceQuickActionsMenu(
                 title = "Snapshot Capture",
                 subtitle = "Photo capture to note",
                 icon = Icons.Default.PhotoCamera,
-                accentColor = EchoAmber,
+                accentColor = echoColors.amber,
                 testTag = "quick_action_snapshot_capture",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.TAP)
@@ -239,7 +240,7 @@ fun WorkspaceQuickActionsMenu(
                 title = "Paste Note",
                 subtitle = "From system clipboard",
                 icon = Icons.Default.ContentPaste,
-                accentColor = EchoGreen,
+                accentColor = echoColors.green,
                 testTag = "quick_action_paste_note",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.TAP)
@@ -252,7 +253,7 @@ fun WorkspaceQuickActionsMenu(
                 title = "Dola AI Copilot",
                 subtitle = "Brainstorm & assist",
                 icon = Icons.Default.AutoAwesome,
-                accentColor = EchoBlue,
+                accentColor = echoColors.blue,
                 testTag = "quick_action_dola_ai",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.CHIME)
@@ -281,7 +282,7 @@ fun WorkspaceQuickActionsMenu(
                     title = "Cloud Sync",
                     subtitle = "Drive categories",
                     icon = Icons.Default.CloudSync,
-                    accentColor = EchoCyan,
+                    accentColor = echoColors.cyan,
                     testTag = "quick_action_cloud_sync",
                     onClick = {
                         toneGenerator.playChime(SoundEffectType.CHIME)
@@ -450,6 +451,7 @@ private fun QuickActionSpeedDialRow(
         }
 
         // Circular Action Icon Button
+        val isDark = com.example.ui.theme.LocalEchoColors.current.isDark
         Surface(
             shape = CircleShape,
             color = action.accentColor,
@@ -462,7 +464,7 @@ private fun QuickActionSpeedDialRow(
                 Icon(
                     imageVector = action.icon,
                     contentDescription = action.title,
-                    tint = if (action.accentColor == EchoCyan || action.accentColor == EchoAmber || action.accentColor == EchoGreen) Color.Black else Color.White,
+                    tint = if (isDark && (action.accentColor == EchoCyan || action.accentColor == EchoAmber || action.accentColor == EchoGreen)) Color.Black else Color.White,
                     modifier = Modifier.size(22.dp)
                 )
             }
@@ -493,14 +495,15 @@ fun BrainstormQuickActionsMenu(
         label = "brainstorm_fab_rotation"
     )
 
-    val actions = remember(onCookTreatment, onSummonHotSeat, onExportConversation, onAudioReplay, onNewStoryFork) {
+    val echoColors = com.example.ui.theme.LocalEchoColors.current
+    val actions = remember(echoColors, onCookTreatment, onSummonHotSeat, onExportConversation, onAudioReplay, onNewStoryFork) {
         listOf(
             QuickActionItem(
                 id = "cook_treatment",
                 title = "Cook Treatment",
                 subtitle = "Start multi-agent debate",
                 icon = Icons.Default.FlashOn,
-                accentColor = EchoCyan,
+                accentColor = echoColors.cyan,
                 testTag = "brainstorm_quick_cook",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.HARMONIC_PING)
@@ -513,7 +516,7 @@ fun BrainstormQuickActionsMenu(
                 title = "Agent Hot-Seat",
                 subtitle = "Spotlight a specific persona",
                 icon = Icons.Default.Diversity3,
-                accentColor = EchoPurple,
+                accentColor = echoColors.purple,
                 testTag = "brainstorm_quick_hotseat",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.TAP)
@@ -526,7 +529,7 @@ fun BrainstormQuickActionsMenu(
                 title = "Export Conversation",
                 subtitle = "Save Markdown / Plain Text",
                 icon = Icons.Default.Share,
-                accentColor = EchoGreen,
+                accentColor = echoColors.green,
                 testTag = "brainstorm_quick_export",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.TAP)
@@ -539,7 +542,7 @@ fun BrainstormQuickActionsMenu(
                 title = "Audio Playback",
                 subtitle = "Play debate with chimes",
                 icon = Icons.Default.GraphicEq,
-                accentColor = EchoBlue,
+                accentColor = echoColors.blue,
                 testTag = "brainstorm_quick_audio",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.HARMONIC_PING)
@@ -552,7 +555,7 @@ fun BrainstormQuickActionsMenu(
                 title = "New Story Fork",
                 subtitle = "Branch into alternate lore",
                 icon = Icons.Default.Lightbulb,
-                accentColor = EchoAmber,
+                accentColor = echoColors.amber,
                 testTag = "brainstorm_quick_fork",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.TAP)
@@ -651,14 +654,15 @@ fun CreativeQuickActionsMenu(
         label = "creative_fab_rotation"
     )
 
-    val actions = remember(onNewStoryboard, onSnapshotCapture, onOpenBrowser, onMediaPlayer, onCloudSync) {
+    val echoColors = com.example.ui.theme.LocalEchoColors.current
+    val actions = remember(echoColors, onNewStoryboard, onSnapshotCapture, onOpenBrowser, onMediaPlayer, onCloudSync) {
         listOf(
             QuickActionItem(
                 id = "new_storyboard",
                 title = "New Storyboard",
                 subtitle = "Generate scene prompt note",
                 icon = Icons.Default.EditNote,
-                accentColor = EchoCyan,
+                accentColor = echoColors.cyan,
                 testTag = "creative_quick_storyboard",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.TAP)
@@ -671,7 +675,7 @@ fun CreativeQuickActionsMenu(
                 title = "Camera Snapshot",
                 subtitle = "Capture reference photo",
                 icon = Icons.Default.PhotoCamera,
-                accentColor = EchoAmber,
+                accentColor = echoColors.amber,
                 testTag = "creative_quick_snapshot",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.TAP)
@@ -684,7 +688,7 @@ fun CreativeQuickActionsMenu(
                 title = "Dola Browser",
                 subtitle = "Research & prompt inspiration",
                 icon = Icons.Default.Language,
-                accentColor = EchoGreen,
+                accentColor = echoColors.green,
                 testTag = "creative_quick_browser",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.TAP)
@@ -697,7 +701,7 @@ fun CreativeQuickActionsMenu(
                 title = "Media Player",
                 subtitle = "Cinema & soundstage lounge",
                 icon = Icons.Default.Movie,
-                accentColor = EchoPurple,
+                accentColor = echoColors.purple,
                 testTag = "creative_quick_player",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.TAP)
@@ -710,7 +714,7 @@ fun CreativeQuickActionsMenu(
                 title = "Cloud Sync",
                 subtitle = "Sync All Now to Google Drive",
                 icon = Icons.Default.CloudSync,
-                accentColor = EchoBlue,
+                accentColor = echoColors.blue,
                 testTag = "creative_quick_sync",
                 onClick = {
                     toneGenerator.playChime(SoundEffectType.HARMONIC_PING)
@@ -995,6 +999,7 @@ fun QuickAudioRecordingDialog(
                         )
 
                         // Animated live audio waveform bars
+                        val echoColors = com.example.ui.theme.LocalEchoColors.current
                         Canvas(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1014,7 +1019,7 @@ fun QuickAudioRecordingDialog(
                                 val startY = centerY - (barHeight / 2f)
 
                                 drawRoundRect(
-                                    color = if (isRecording) EchoRed else EchoCyan,
+                                    color = if (isRecording) echoColors.red else echoColors.cyan,
                                     topLeft = Offset(startX, startY),
                                     size = Size(barWidth, barHeight),
                                     cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())

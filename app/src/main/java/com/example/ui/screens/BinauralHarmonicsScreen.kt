@@ -188,10 +188,10 @@ fun BinauralHarmonicsScreen(
     fun applyBinauralAudio(start: Boolean = isPlaying) {
         toneGenerator.setVolumeLevel(volumeLevel)
         if (start) {
-            toneGenerator.start(
-                frequencies = listOf(leftFreq, rightFreq),
-                mult = 1.0,
-                tidalLfo = false
+            toneGenerator.startBinaural(
+                leftHz = leftFreq,
+                rightHz = rightFreq,
+                mult = 1.0
             )
         } else {
             toneGenerator.stop()
@@ -322,7 +322,7 @@ fun BinauralHarmonicsScreen(
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF030A14)),
+                colors = CardDefaults.cardColors(containerColor = if (com.example.ui.theme.LocalEchoColors.current.isDark) Color(0xFF030A14) else EchoCard),
                 border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(EchoCardStroke))
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -656,6 +656,7 @@ fun LissajousVisualizerCanvas(
         label = "phase_rot"
     )
 
+    val echoColors = com.example.ui.theme.LocalEchoColors.current
     Canvas(modifier = modifier) {
         val centerX = size.width / 2f
         val centerY = size.height / 2f
@@ -663,8 +664,9 @@ fun LissajousVisualizerCanvas(
         val radiusY = (size.height * 0.42f)
 
         // Subtle background grid
-        drawLine(Color(0xFF1E293B), Offset(0f, centerY), Offset(size.width, centerY), strokeWidth = 1f)
-        drawLine(Color(0xFF1E293B), Offset(centerX, 0f), Offset(centerX, size.height), strokeWidth = 1f)
+        val gridColor = if (echoColors.isDark) Color(0xFF1E293B) else echoColors.cardStroke
+        drawLine(gridColor, Offset(0f, centerY), Offset(size.width, centerY), strokeWidth = 1f)
+        drawLine(gridColor, Offset(centerX, 0f), Offset(centerX, size.height), strokeWidth = 1f)
 
         val ratio = (freqA / freqB.coerceAtLeast(1f)).coerceIn(0.2f, 5.0f)
         val path = Path()
@@ -684,7 +686,7 @@ fun LissajousVisualizerCanvas(
 
         drawPath(
             path = path,
-            color = if (isPlaying) EchoGreen else EchoCyan,
+            color = if (isPlaying) echoColors.green else echoColors.cyan,
             style = Stroke(width = if (isPlaying) 2.5f else 1.8f, cap = StrokeCap.Round)
         )
     }

@@ -94,6 +94,7 @@ import java.util.Locale
 fun AthenaSystemUpdateConsole(
     onDismiss: () -> Unit,
     toneGenerator: HarmonicToneGenerator? = null,
+    currentScreen: String = "ARCHIVE",
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -397,7 +398,7 @@ fun AthenaSystemUpdateConsole(
                                                     Toast.makeText(context, "Authorizing in-app installation first...", Toast.LENGTH_SHORT).show()
                                                     AthenaUpdateManager.openUnknownAppSourcesSettings(context)
                                                 } else {
-                                                    val launched = AthenaUpdateManager.triggerPackageInstall(context, pkg.file, "SystemUpdate")
+                                                    val launched = AthenaUpdateManager.triggerPackageInstall(context, pkg.file, currentScreen)
                                                     if (launched) {
                                                         Toast.makeText(context, "Launching package installer for update...", Toast.LENGTH_SHORT).show()
                                                     } else {
@@ -510,7 +511,7 @@ fun AthenaSystemUpdateConsole(
                         toneGenerator?.playChime(SoundEffectType.TAP)
                         showRestartConfirmDialog = false
                         Toast.makeText(context, "Rebooting ATHENA with state recovery...", Toast.LENGTH_SHORT).show()
-                        AthenaUpdateManager.triggerCleanAppRestart(context, "Cockpit")
+                        AthenaUpdateManager.triggerCleanAppRestart(context, currentScreen)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = EchoAmber, contentColor = Color(0xFF0A0B10))
                 ) {

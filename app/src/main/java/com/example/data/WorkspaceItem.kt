@@ -1,9 +1,13 @@
 package com.example.data
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "workspace_items")
+@Entity(
+    tableName = "workspace_items",
+    indices = [Index(value = ["isDeleted", "parentId"])]
+)
 data class WorkspaceItem(
     @PrimaryKey val id: String,
     val parentId: String? = null,
@@ -11,6 +15,7 @@ data class WorkspaceItem(
     val name: String,
     val text: String = "",
     val fileType: String = "",
+    val fileUri: String? = null,
     val tags: String = "", // comma-separated
     val isPinned: Boolean = false,
     val isDeleted: Boolean = false,

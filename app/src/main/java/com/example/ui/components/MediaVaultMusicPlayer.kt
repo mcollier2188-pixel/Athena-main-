@@ -184,7 +184,7 @@ fun MediaVaultMusicPlayer(
     var currentTrackIndex by remember { mutableIntStateOf(0) }
     var isPlaying by remember { mutableStateOf(false) }
     var currentProgressSeconds by remember { mutableIntStateOf(0) }
-    val totalTrackDurationSeconds by remember { mutableIntStateOf(210) } // Default ~3:30
+    var totalTrackDurationSeconds by remember { mutableIntStateOf(210) } // Default ~3:30
     var isLooping by remember { mutableStateOf(false) }
     var isShuffle by remember { mutableStateOf(false) }
 
@@ -199,8 +199,12 @@ fun MediaVaultMusicPlayer(
 
     fun stopPlayback() {
         isPlaying = false
-        mediaPlayer?.stop()
-        mediaPlayer?.release()
+        mediaPlayer?.let { mp ->
+            runCatching {
+                if (mp.isPlaying) mp.stop()
+            }
+            runCatching { mp.release() }
+        }
         mediaPlayer = null
         if (isHarmonicCarrierLayerActive) {
             toneGenerator.stop()
@@ -219,6 +223,7 @@ fun MediaVaultMusicPlayer(
 
         if (track.isBuiltInHarmonic || track.uri == null) {
             // Built-in harmonic playback
+            totalTrackDurationSeconds = 210
             isPlaying = true
             if (isHarmonicCarrierLayerActive) {
                 toneGenerator.start(frequencies = listOf(targetFreq), mult = 1.0)
@@ -226,6 +231,7 @@ fun MediaVaultMusicPlayer(
             toneGenerator.playChime(SoundEffectType.CHIME)
         } else {
             // User local file playback
+            val repeatTrack = isLooping
             try {
                 val player = MediaPlayer().apply {
                     setAudioAttributes(
@@ -236,9 +242,10 @@ fun MediaVaultMusicPlayer(
                     )
                     setDataSource(context, track.uri)
                     prepare()
-                    isLooping = isLooping
+                    this.isLooping = repeatTrack
                     start()
                 }
+                totalTrackDurationSeconds = (player.duration / 1000).coerceAtLeast(1)
                 mediaPlayer = player
                 isPlaying = true
 
@@ -256,14 +263,14 @@ fun MediaVaultMusicPlayer(
     fun togglePlayPause() {
         if (isPlaying) {
             isPlaying = false
-            mediaPlayer?.pause()
+            runCatching { mediaPlayer?.pause() }
             if (isHarmonicCarrierLayerActive) {
                 toneGenerator.stop()
             }
             toneGenerator.playChime(SoundEffectType.TAP)
         } else {
             if (mediaPlayer != null) {
-                mediaPlayer?.start()
+                runCatching { mediaPlayer?.start() }
                 isPlaying = true
                 if (isHarmonicCarrierLayerActive) {
                     toneGenerator.start(frequencies = listOf(harmonicCarrierFrequency), mult = 0.8)
@@ -275,6 +282,7 @@ fun MediaVaultMusicPlayer(
     }
 
     fun playNext() {
+        if (playlist.isEmpty()) return
         val nextIdx = if (isShuffle) {
             (playlist.indices).random()
         } else {
@@ -284,20 +292,33 @@ fun MediaVaultMusicPlayer(
     }
 
     fun playPrevious() {
+        if (playlist.isEmpty()) return
         val prevIdx = if (currentTrackIndex > 0) currentTrackIndex - 1 else playlist.size - 1
         playTrack(prevIdx)
     }
 
     // Progress counter ticker
-    LaunchedEffect(isPlaying) {
+    LaunchedEffect(isPlaying, mediaPlayer) {
         while (isPlaying) {
             delay(1000)
-            currentProgressSeconds += 1
-            if (currentProgressSeconds >= totalTrackDurationSeconds) {
-                if (isLooping) {
-                    currentProgressSeconds = 0
-                } else {
+            val mp = mediaPlayer
+            if (mp != null) {
+                val posSec = runCatching { mp.currentPosition / 1000 }.getOrNull()
+                val playingNow = runCatching { mp.isPlaying }.getOrDefault(false)
+                if (posSec != null) {
+                    currentProgressSeconds = posSec
+                }
+                if (!playingNow && !isLooping && currentProgressSeconds >= totalTrackDurationSeconds - 1) {
                     playNext()
+                }
+            } else {
+                currentProgressSeconds += 1
+                if (currentProgressSeconds >= totalTrackDurationSeconds) {
+                    if (isLooping) {
+                        currentProgressSeconds = 0
+                    } else {
+                        playNext()
+                    }
                 }
             }
         }
@@ -509,13 +530,14 @@ fun MediaVaultMusicPlayer(
                         modifier = Modifier.size(200.dp),
                         contentAlignment = Alignment.Center
                     ) {
+                        val echoColors = com.example.ui.theme.LocalEchoColors.current
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val center = Offset(size.width / 2f, size.height / 2f)
                             val maxR = size.minDimension / 2f
 
                             // Outer Neon Glow Ring
                             drawCircle(
-                                color = if (isPlaying) EchoCyan.copy(alpha = 0.3f) else EchoDarkSurface,
+                                color = if (isPlaying) echoColors.cyan.copy(alpha = 0.3f) else echoColors.darkSurface,
                                 radius = maxR,
                                 center = center,
                                 style = Stroke(width = 4.dp.toPx())
@@ -524,7 +546,7 @@ fun MediaVaultMusicPlayer(
                             // Vinyl Grooves
                             for (step in 1..4) {
                                 drawCircle(
-                                    color = Color(0xFF162536),
+                                    color = if (echoColors.isDark) Color(0xFF162536) else echoColors.cardStroke,
                                     radius = maxR * (0.35f + step * 0.14f),
                                     center = center,
                                     style = Stroke(width = 1.dp.toPx())
@@ -541,7 +563,7 @@ fun MediaVaultMusicPlayer(
                                 val y = center.y + sin(currentAngle) * orbR
 
                                 drawCircle(
-                                    color = if (i % 3 == 0) Color(0xFFFFD700) else EchoCyan,
+                                    color = if (i % 3 == 0) Color(0xFFFFD700) else echoColors.cyan,
                                     radius = if (isPlaying) 3.5.dp.toPx() else 2.dp.toPx(),
                                     center = Offset(x, y)
                                 )
@@ -549,12 +571,12 @@ fun MediaVaultMusicPlayer(
 
                             // Inner Core Hub
                             drawCircle(
-                                color = EchoDarkSurface,
+                                color = echoColors.darkSurface,
                                 radius = maxR * 0.3f,
                                 center = center
                             )
                             drawCircle(
-                                color = EchoCyan,
+                                color = echoColors.cyan,
                                 radius = maxR * 0.3f,
                                 center = center,
                                 style = Stroke(width = 2.dp.toPx())
@@ -610,6 +632,7 @@ fun MediaVaultMusicPlayer(
                             .background(EchoDarkSurface)
                             .border(1.dp, EchoCardStroke, RoundedCornerShape(10.dp))
                     ) {
+                        val echoColors = com.example.ui.theme.LocalEchoColors.current
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val w = size.width
                             val h = size.height
@@ -629,8 +652,8 @@ fun MediaVaultMusicPlayer(
 
                                 val barBrush = Brush.verticalGradient(
                                     colors = listOf(
-                                        if (i < 8) Color(0xFFFFD700) else if (i < 24) EchoCyan else Color(0xFF00E676),
-                                        EchoDarkSurface
+                                        if (i < 8) Color(0xFFFFD700) else if (i < 24) echoColors.cyan else Color(0xFF00E676),
+                                        echoColors.darkSurface
                                     )
                                 )
 
@@ -654,7 +677,9 @@ fun MediaVaultMusicPlayer(
                         Slider(
                             value = progressFraction,
                             onValueChange = { frac ->
-                                currentProgressSeconds = (frac * totalTrackDurationSeconds).toInt()
+                                val targetSec = (frac * totalTrackDurationSeconds).toInt()
+                                currentProgressSeconds = targetSec
+                                runCatching { mediaPlayer?.seekTo(targetSec * 1000) }
                             },
                             colors = SliderDefaults.colors(
                                 thumbColor = EchoCyan,
@@ -749,7 +774,9 @@ fun MediaVaultMusicPlayer(
 
                         IconButton(
                             onClick = {
-                                isLooping = !isLooping
+                                val nextLoop = !isLooping
+                                isLooping = nextLoop
+                                runCatching { mediaPlayer?.isLooping = nextLoop }
                                 toneGenerator.playChime(SoundEffectType.TAP)
                             }
                         ) {

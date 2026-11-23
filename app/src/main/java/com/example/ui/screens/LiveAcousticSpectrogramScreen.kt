@@ -141,7 +141,6 @@ fun LiveAcousticSpectrogramScreen(
     val numBins = 72
     val maxDisplayFreq = 1200.0 // Hz
     val waterfallHistory = remember { mutableStateListOf<FloatArray>() }
-    val latestSpectrum = remember { FloatArray(numBins) }
 
     val milestones = remember {
         listOf(
@@ -177,127 +176,135 @@ fun LiveAcousticSpectrogramScreen(
             }
 
             var audioRecord: AudioRecord? = null
-            if (hasMicPermission && !useSimulationFallback) {
-                try {
-                    val minBuf = AudioRecord.getMinBufferSize(
-                        sampleRate,
-                        AudioFormat.CHANNEL_IN_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT
-                    )
-                    audioRecord = AudioRecord(
-                        MediaRecorder.AudioSource.MIC,
-                        sampleRate,
-                        AudioFormat.CHANNEL_IN_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT,
-                        maxOf(minBuf, fftSize * 2)
-                    )
-                    if (audioRecord.state == AudioRecord.STATE_INITIALIZED) {
-                        audioRecord.startRecording()
-                    } else {
-                        audioRecord.release()
+            try {
+                if (hasMicPermission && !useSimulationFallback) {
+                    try {
+                        val minBuf = AudioRecord.getMinBufferSize(
+                            sampleRate,
+                            AudioFormat.CHANNEL_IN_MONO,
+                            AudioFormat.ENCODING_PCM_16BIT
+                        )
+                        if (minBuf > 0) {
+                            audioRecord = AudioRecord(
+                                MediaRecorder.AudioSource.MIC,
+                                sampleRate,
+                                AudioFormat.CHANNEL_IN_MONO,
+                                AudioFormat.ENCODING_PCM_16BIT,
+                                maxOf(minBuf, fftSize * 2)
+                            )
+                            if (audioRecord.state == AudioRecord.STATE_INITIALIZED) {
+                                audioRecord.startRecording()
+                            } else {
+                                audioRecord.release()
+                                audioRecord = null
+                            }
+                        }
+                    } catch (e: Exception) {
+                        runCatching { audioRecord?.release() }
                         audioRecord = null
                     }
-                } catch (e: Exception) {
-                    audioRecord = null
                 }
-            }
 
-            var simPhase = 0.0
-            val rand = Random()
+                var simPhase = 0.0
+                val rand = Random()
 
-            while (isActive && isRecording) {
-                var readSuccess = false
+                while (isActive && isRecording) {
+                    var readSuccess = false
 
-                if (audioRecord != null && audioRecord.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-                    val readSamples = audioRecord.read(buffer, 0, fftSize)
-                    if (readSamples > 0) {
+                    if (audioRecord != null && audioRecord.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                        val readSamples = audioRecord.read(buffer, 0, fftSize)
+                        if (readSamples > 0) {
+                            for (i in 0 until fftSize) {
+                                real[i] = if (i < readSamples) {
+                                    (buffer[i].toDouble() / 32768.0) * window[i]
+                                } else {
+                                    0.0
+                                }
+                                imag[i] = 0.0
+                            }
+                            readSuccess = true
+                        }
+                    }
+
+                    // If real mic unavailable or simulated mode enabled, synthesize ambient room harmonics
+                    if (!readSuccess) {
+                        simPhase += 0.05
+                        // Simulated room: 432 Hz carrier, 528 Hz harmonic overtone, and subtle pink noise
+                        val targetSimFreq = 432.0
                         for (i in 0 until fftSize) {
-                            real[i] = (buffer[i].toDouble() / 32768.0) * window[i]
+                            val t = (i.toDouble() / sampleRate) + simPhase
+                            val s1 = 0.55 * sin(2.0 * PI * targetSimFreq * t)
+                            val s2 = 0.35 * sin(2.0 * PI * 528.0 * t)
+                            val s3 = 0.20 * sin(2.0 * PI * 121.2 * t)
+                            val noise = (rand.nextDouble() * 2.0 - 1.0) * 0.08
+                            real[i] = (s1 + s2 + s3 + noise) * window[i]
                             imag[i] = 0.0
                         }
-                        readSuccess = true
                     }
-                }
 
-                // If real mic unavailable or simulated mode enabled, synthesize ambient room harmonics
-                if (!readSuccess) {
-                    simPhase += 0.05
-                    // Simulated room: 432 Hz carrier, 528 Hz harmonic overtone, and subtle pink noise
-                    val targetSimFreq = 432.0
-                    for (i in 0 until fftSize) {
-                        val t = (i.toDouble() / sampleRate) + simPhase
-                        val s1 = 0.55 * sin(2.0 * PI * targetSimFreq * t)
-                        val s2 = 0.35 * sin(2.0 * PI * 528.0 * t)
-                        val s3 = 0.20 * sin(2.0 * PI * 121.2 * t)
-                        val noise = (rand.nextDouble() * 2.0 - 1.0) * 0.08
-                        real[i] = (s1 + s2 + s3 + noise) * window[i]
-                        imag[i] = 0.0
-                    }
-                }
+                    // Radix-2 Cooley-Tukey Fast Fourier Transform
+                    computeFFT(real, imag, fftSize)
 
-                // Radix-2 Cooley-Tukey Fast Fourier Transform
-                computeFFT(real, imag, fftSize)
+                    // Calculate magnitudes & map to bins
+                    val currentBins = FloatArray(numBins)
+                    var maxMag = 0.0
+                    var maxFreq = 0.0
 
-                // Calculate magnitudes & map to bins
-                val currentBins = FloatArray(numBins)
-                var maxMag = 0.0
-                var maxFreq = 0.0
+                    for (bin in 0 until numBins) {
+                        val startFreq = (bin.toDouble() / numBins) * maxDisplayFreq
+                        val endFreq = ((bin + 1).toDouble() / numBins) * maxDisplayFreq
+                        val startIdx = (startFreq * fftSize / sampleRate).toInt().coerceIn(1, fftSize / 2 - 1)
+                        val endIdx = (endFreq * fftSize / sampleRate).toInt().coerceIn(startIdx + 1, fftSize / 2)
 
-                for (bin in 0 until numBins) {
-                    val startFreq = (bin.toDouble() / numBins) * maxDisplayFreq
-                    val endFreq = ((bin + 1).toDouble() / numBins) * maxDisplayFreq
-                    val startIdx = (startFreq * fftSize / sampleRate).toInt().coerceIn(1, fftSize / 2 - 1)
-                    val endIdx = (endFreq * fftSize / sampleRate).toInt().coerceIn(startIdx + 1, fftSize / 2)
-
-                    var binSum = 0.0
-                    for (k in startIdx until endIdx) {
-                        val mag = sqrt(real[k] * real[k] + imag[k] * imag[k])
-                        val freq = (k.toDouble() * sampleRate) / fftSize
-                        if (mag > maxMag) {
-                            maxMag = mag
-                            maxFreq = freq
+                        var binSum = 0.0
+                        for (k in startIdx until endIdx) {
+                            val mag = sqrt(real[k] * real[k] + imag[k] * imag[k])
+                            val freq = (k.toDouble() * sampleRate) / fftSize
+                            if (mag > maxMag) {
+                                maxMag = mag
+                                maxFreq = freq
+                            }
+                            binSum += mag
                         }
-                        binSum += mag
+                        val avgMag = (binSum / (endIdx - startIdx).coerceAtLeast(1)).toFloat()
+                        val normalized = (avgMag * 6f).coerceIn(0f, 1f)
+                        currentBins[bin] = normalized
                     }
-                    val avgMag = (binSum / (endIdx - startIdx).coerceAtLeast(1)).toFloat()
-                    val normalized = (avgMag * 6f).coerceIn(0f, 1f)
-                    currentBins[bin] = normalized
-                    latestSpectrum[bin] = normalized
+
+                    // Resonant Peak Detection & Milestone Matching
+                    val detectedHz = maxFreq
+                    val detectedDb = (20.0 * log10(maxMag.coerceAtLeast(0.00001))).toFloat()
+
+                    val matchedMilestone = milestones.firstOrNull {
+                        abs(detectedHz - it.targetHz) <= it.toleranceHz
+                    }
+
+                    // Calculate cents deviation from 440 Hz
+                    val centsOffset = if (detectedHz > 10.0) {
+                        1200.0 * log2(detectedHz / 440.0)
+                    } else 0.0
+
+                    withContext(Dispatchers.Main) {
+                        peakFrequencyHz = detectedHz
+                        peakAmplitudeDb = detectedDb
+                        detectedMilestone = matchedMilestone
+                        tuningOffsetCents = centsOffset
+
+                        waterfallHistory.add(0, currentBins)
+                        if (waterfallHistory.size > 50) {
+                            waterfallHistory.removeAt(waterfallHistory.size - 1)
+                        }
+                    }
+
+                    kotlinx.coroutines.delay(45) // ~22 FPS update
                 }
-
-                // Resonant Peak Detection & Milestone Matching
-                val detectedHz = maxFreq
-                val detectedDb = (20.0 * log10(maxMag.coerceAtLeast(0.00001))).toFloat()
-
-                val matchedMilestone = milestones.firstOrNull {
-                    abs(detectedHz - it.targetHz) <= it.toleranceHz
-                }
-
-                // Calculate cents deviation from 440 Hz
-                val centsOffset = if (detectedHz > 10.0) {
-                    1200.0 * log2(detectedHz / 440.0)
-                } else 0.0
-
-                withContext(Dispatchers.Main) {
-                    peakFrequencyHz = detectedHz
-                    peakAmplitudeDb = detectedDb
-                    detectedMilestone = matchedMilestone
-                    tuningOffsetCents = centsOffset
-
-                    waterfallHistory.add(0, currentBins)
-                    if (waterfallHistory.size > 50) {
-                        waterfallHistory.removeAt(waterfallHistory.size - 1)
+            } finally {
+                runCatching {
+                    if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                        audioRecord.stop()
                     }
                 }
-
-                kotlinx.coroutines.delay(45) // ~22 FPS update
-            }
-
-            try {
-                audioRecord?.stop()
-                audioRecord?.release()
-            } catch (e: Exception) {
-                // cleanup
+                runCatching { audioRecord?.release() }
             }
         }
     }
@@ -593,21 +600,23 @@ fun LiveAcousticSpectrogramScreen(
                             .background(Color(0xFF080C14))
                             .border(1.dp, EchoCardStroke, RoundedCornerShape(8.dp))
                     ) {
+                        val crtColors = com.example.ui.theme.DarkEchoColors
                         Canvas(modifier = Modifier.fillMaxSize()) {
+                            val currentSpectrum = waterfallHistory.firstOrNull()
                             val w = size.width
                             val h = size.height
                             val barW = w / numBins.toFloat()
 
                             for (i in 0 until numBins) {
-                                val mag = latestSpectrum[i]
+                                val mag = currentSpectrum?.getOrNull(i) ?: 0f
                                 val barH = mag * h
                                 val x = i * barW
                                 val y = h - barH
 
                                 drawRect(
-                                    brush = Brush.verticalGradient(listOf(EchoCyan, EchoGreen)),
+                                    brush = Brush.verticalGradient(listOf(crtColors.cyan, crtColors.green)),
                                     topLeft = Offset(x, y),
-                                    size = Size(barW - 1f, barH)
+                                    size = Size((barW - 1f).coerceAtLeast(0.5f), barH)
                                 )
                             }
                         }

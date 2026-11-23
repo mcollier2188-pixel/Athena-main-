@@ -87,6 +87,7 @@ import com.example.ui.theme.EchoBgAlt
 import com.example.ui.theme.EchoCard
 import com.example.ui.theme.EchoCardStroke
 import com.example.ui.theme.EchoCyan
+import com.example.ui.theme.EchoDarkSurface
 import com.example.ui.theme.EchoGreen
 import com.example.ui.theme.EchoMuted
 import com.example.ui.theme.EchoOnCyan
@@ -169,7 +170,7 @@ fun InteractiveAppRunnerDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFF040810))
+                        .background(if (com.example.ui.theme.LocalEchoColors.current.isDark) Color(0xFF040810) else EchoDarkSurface)
                         .padding(horizontal = 16.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -230,7 +231,7 @@ fun InteractiveAppRunnerDialog(
                         label = { Text("DSP Engine", fontSize = 11.sp) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = EchoCyan,
-                            selectedLabelColor = Color.Black,
+                            selectedLabelColor = com.example.ui.theme.EchoOnCyan,
                             containerColor = EchoCard,
                             labelColor = EchoText
                         ),
@@ -242,7 +243,7 @@ fun InteractiveAppRunnerDialog(
                         label = { Text("Sensors", fontSize = 11.sp) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = EchoCyan,
-                            selectedLabelColor = Color.Black,
+                            selectedLabelColor = com.example.ui.theme.EchoOnCyan,
                             containerColor = EchoCard,
                             labelColor = EchoText
                         ),
@@ -254,7 +255,7 @@ fun InteractiveAppRunnerDialog(
                         label = { Text("Log Console", fontSize = 11.sp) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = EchoCyan,
-                            selectedLabelColor = Color.Black,
+                            selectedLabelColor = com.example.ui.theme.EchoOnCyan,
                             containerColor = EchoCard,
                             labelColor = EchoText
                         ),
@@ -301,6 +302,7 @@ fun InteractiveAppRunnerDialog(
                                             .background(Color(0xFF060A12))
                                             .border(1.dp, EchoCardStroke, RoundedCornerShape(8.dp))
                                     ) {
+                                        val crtColors = com.example.ui.theme.DarkEchoColors
                                         Canvas(modifier = Modifier.fillMaxSize()) {
                                             val w = size.width
                                             val h = size.height
@@ -322,7 +324,7 @@ fun InteractiveAppRunnerDialog(
 
                                             drawPath(
                                                 path = path,
-                                                color = if (isAudioActive) EchoGreen else EchoCyan,
+                                                color = if (isAudioActive) crtColors.green else crtColors.cyan,
                                                 style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
                                             )
                                         }
@@ -352,7 +354,7 @@ fun InteractiveAppRunnerDialog(
                                         modifier = Modifier.fillMaxWidth().height(42.dp),
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = if (isAudioActive) EchoGreen else EchoCyan,
-                                            contentColor = Color.Black
+                                            contentColor = com.example.ui.theme.EchoOnCyan
                                         )
                                     ) {
                                         Icon(if (isAudioActive) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null)
@@ -398,7 +400,7 @@ fun InteractiveAppRunnerDialog(
                                             Toast.makeText(context, "Telemetry broadcasted!", Toast.LENGTH_SHORT).show()
                                         },
                                         modifier = Modifier.fillMaxWidth(),
-                                        colors = ButtonDefaults.buttonColors(containerColor = EchoCyan, contentColor = Color.Black)
+                                        colors = ButtonDefaults.buttonColors(containerColor = EchoCyan, contentColor = com.example.ui.theme.EchoOnCyan)
                                     ) {
                                         Icon(Icons.Default.Bolt, contentDescription = null)
                                         Spacer(Modifier.width(6.dp))
@@ -411,7 +413,7 @@ fun InteractiveAppRunnerDialog(
                             // Console Log Screen
                             Card(
                                 modifier = Modifier.fillMaxSize(),
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFF04070D))
+                                colors = CardDefaults.cardColors(containerColor = if (com.example.ui.theme.LocalEchoColors.current.isDark) Color(0xFF04070D) else EchoDarkSurface)
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Text("APP RUNTIME DIAGNOSTIC CONSOLE", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = EchoMuted)

@@ -780,15 +780,15 @@ fun PlaylistMediaDetailDialog(
     }
 }
 
-private fun parseYouTubeVideoId(input: String): String {
+internal fun parseYouTubeVideoId(input: String): String {
     val trimmed = input.trim()
-    return if (trimmed.contains("v=")) {
-        trimmed.substringAfter("v=").substringBefore("&").substringBefore("#")
-    } else if (trimmed.contains("youtu.be/")) {
-        trimmed.substringAfter("youtu.be/").substringBefore("?").substringBefore("#")
-    } else if (trimmed.contains("embed/")) {
-        trimmed.substringAfter("embed/").substringBefore("?").substringBefore("#")
-    } else {
-        trimmed
-    }
+    val candidate = when {
+        trimmed.contains("v=") -> trimmed.substringAfter("v=").substringBefore("&").substringBefore("#")
+        trimmed.contains("youtu.be/") -> trimmed.substringAfter("youtu.be/").substringBefore("?").substringBefore("#").substringBefore("/")
+        trimmed.contains("shorts/") -> trimmed.substringAfter("shorts/").substringBefore("?").substringBefore("#").substringBefore("/")
+        trimmed.contains("live/") -> trimmed.substringAfter("live/").substringBefore("?").substringBefore("#").substringBefore("/")
+        trimmed.contains("embed/") -> trimmed.substringAfter("embed/").substringBefore("?").substringBefore("#").substringBefore("/")
+        else -> trimmed
+    }.trim()
+    return if (Regex("^[a-zA-Z0-9_-]{11}$").matches(candidate)) candidate else ""
 }

@@ -24,9 +24,9 @@ data class ChatMessage(
 )
 
 enum class AthenaChatModel(val modelId: String, val displayName: String, val description: String) {
-    FLASH("gemini-3.5-flash", "Gemini 3.5 Flash", "General tasks & standard responses"),
-    PRO("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", "Complex STEM reasoning & advanced science"),
-    LITE("gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite", "Ultra-fast quick responses")
+    FLASH("gemini-2.5-flash", "Gemini 2.5 Flash", "General tasks & standard responses"),
+    PRO("gemini-2.5-pro", "Gemini 2.5 Pro", "Complex STEM reasoning & advanced science"),
+    LITE("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", "Ultra-fast quick responses")
 }
 
 data class MusicGenerationItem(
@@ -55,7 +55,7 @@ data class VideoGenerationItem(
 data class ImageGenerationItem(
     val id: String = java.util.UUID.randomUUID().toString(),
     val prompt: String,
-    val model: String = "gemini-nano-banana-2.1",
+    val model: String = "gemini-2.5-flash-image",
     val aspectRatio: String = "1:1",
     val title: String,
     val isEdited: Boolean = false,
@@ -70,12 +70,7 @@ object AthenaService {
         .build()
 
     val isApiKeyConfigured: Boolean
-        get() = try {
-            val key = BuildConfig.GEMINI_API_KEY
-            key.isNotBlank() && !key.contains("MY_GEMINI_API_KEY") && !key.contains("PLACEHOLDER")
-        } catch (e: Exception) {
-            false
-        }
+        get() = CreativeHubAiService.resolveEffectiveApiKey().isNotBlank()
 
     /**
      * Multi-turn chat using specified model and system instruction, with optional Search or Maps grounding
@@ -88,7 +83,7 @@ object AthenaService {
         enableMapsGrounding: Boolean = false,
         roleSystemInstruction: String = ""
     ): Result<ChatMessage> = withContext(Dispatchers.IO) {
-        val apiKey = try { BuildConfig.GEMINI_API_KEY } catch (e: Exception) { "" }
+        val apiKey = CreativeHubAiService.resolveEffectiveApiKey()
 
         val systemInstruction = if (roleSystemInstruction.isNotBlank()) {
             roleSystemInstruction
@@ -104,15 +99,22 @@ object AthenaService {
             """.trimIndent()
         }
 
-        if (apiKey.isNotBlank() && !apiKey.contains("MY_GEMINI_API_KEY") && !apiKey.contains("PLACEHOLDER")) {
+        if (apiKey.isNotBlank()) {
             try {
-                // If search or maps grounding is active, use gemini-3.5-flash as required
-                val actualModelId = if (enableSearchGrounding || enableMapsGrounding) "gemini-3.5-flash" else selectedModel.modelId
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$actualModelId:generateContent?key=$apiKey"
+                val actualModelId = if (enableSearchGrounding || enableMapsGrounding) "gemini-2.5-flash" else selectedModel.modelId
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$actualModelId:generateContent"
 
                 val contentsArray = JSONArray()
 
-                val recentHistory = history.takeLast(10)
+                val recentHistory = history
+                    .let { list ->
+                        if (list.lastOrNull()?.let { it.role == "user" && it.content == newMessage } == true) {
+                            list.dropLast(1)
+                        } else {
+                            list
+                        }
+                    }
+                    .takeLast(10)
                 for (msg in recentHistory) {
                     val partObj = JSONObject().put("text", msg.content)
                     val contentObj = JSONObject().apply {
@@ -138,7 +140,6 @@ object AthenaService {
                         put("maxOutputTokens", 2048)
                     })
 
-                    // Add tools for Search or Maps Grounding if enabled
                     val toolsArray = JSONArray()
                     if (enableSearchGrounding) {
                         toolsArray.put(JSONObject().put("googleSearch", JSONObject()))
@@ -153,40 +154,52 @@ object AthenaService {
 
                 val request = Request.Builder()
                     .url(endpoint)
+                    .addHeader("x-goog-api-key", apiKey)
                     .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                val response = client.newCall(request).execute()
-                val responseString = response.body?.string() ?: ""
+                client.newCall(request).execute().use { response ->
+                    val responseString = response.body?.string() ?: ""
 
-                if (response.isSuccessful) {
-                    val root = JSONObject(responseString)
-                    val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
-                    val parts = candidate?.optJSONObject("content")?.optJSONArray("parts")
-                    val reply = parts?.optJSONObject(0)?.optString("text")
+                    if (response.isSuccessful) {
+                        val root = JSONObject(responseString)
+                        val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
+                        val parts = candidate?.optJSONObject("content")?.optJSONArray("parts")
+                        val replyBuilder = StringBuilder()
+                        if (parts != null) {
+                            for (i in 0 until parts.length()) {
+                                val p = parts.optJSONObject(i)
+                                if (p != null && !p.optBoolean("thought", false)) {
+                                    replyBuilder.append(p.optString("text"))
+                                }
+                            }
+                        }
+                        val reply = replyBuilder.toString().trim()
 
-                    // Extract Grounding metadata sources if present
-                    val sources = mutableListOf<String>()
-                    val groundingMetadata = candidate?.optJSONObject("groundingMetadata")
-                    val webSearchQueries = groundingMetadata?.optJSONArray("webSearchQueries")
-                    if (webSearchQueries != null) {
-                        for (i in 0 until webSearchQueries.length()) {
-                            sources.add(webSearchQueries.optString(i))
+                        val sources = mutableListOf<String>()
+                        val groundingMetadata = candidate?.optJSONObject("groundingMetadata")
+                        val webSearchQueries = groundingMetadata?.optJSONArray("webSearchQueries")
+                        if (webSearchQueries != null) {
+                            for (i in 0 until webSearchQueries.length()) {
+                                sources.add(webSearchQueries.optString(i))
+                            }
+                        }
+
+                        if (reply.isNotBlank()) {
+                            val resultMsg = ChatMessage(
+                                role = "model",
+                                content = reply,
+                                modelUsed = if (enableSearchGrounding) "Gemini 2.5 Flash (Search Grounded)"
+                                            else if (enableMapsGrounding) "Gemini 2.5 Flash (Maps Grounded)"
+                                            else selectedModel.displayName,
+                                sources = sources
+                            )
+                            return@withContext Result.success(resultMsg)
                         }
                     }
-
-                    if (!reply.isNullOrBlank()) {
-                        val resultMsg = ChatMessage(
-                            role = "model",
-                            content = reply.trim(),
-                            modelUsed = if (enableSearchGrounding) "Gemini 3.5 Flash (Search Grounded)"
-                                        else if (enableMapsGrounding) "Gemini 3.5 Flash (Maps Grounded)"
-                                        else selectedModel.displayName,
-                            sources = sources
-                        )
-                        return@withContext Result.success(resultMsg)
-                    }
                 }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Fallback to offline scientific engine
             }
@@ -206,7 +219,7 @@ object AthenaService {
     }
 
     /**
-     * Music generation using lyria-3-clip-preview (up to 30s) or lyria-3-pro-preview (full-length)
+     * Music generation metadata builder (avoids leaking unclosed stub HTTP responses)
      */
     suspend fun generateLyriaMusic(
         prompt: String,
@@ -215,11 +228,11 @@ object AthenaService {
     ): Result<MusicGenerationItem> = withContext(Dispatchers.IO) {
         val modelName = if (isFullLengthTrack) "lyria-3-pro-preview" else "lyria-3-clip-preview"
         val duration = if (isFullLengthTrack) 180 else 30
-        val apiKey = try { BuildConfig.GEMINI_API_KEY } catch (e: Exception) { "" }
+        val apiKey = CreativeHubAiService.resolveEffectiveApiKey()
 
-        if (apiKey.isNotBlank() && !apiKey.contains("MY_GEMINI_API_KEY") && !apiKey.contains("PLACEHOLDER")) {
+        if (apiKey.isNotBlank()) {
             try {
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$apiKey"
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent"
                 val body = JSONObject().apply {
                     put("contents", JSONArray().put(JSONObject().apply {
                         put("parts", JSONArray().put(JSONObject().put("text", "Generate music track: $prompt. Style: $genre")))
@@ -231,15 +244,18 @@ object AthenaService {
 
                 val request = Request.Builder()
                     .url(endpoint)
+                    .addHeader("x-goog-api-key", apiKey)
                     .post(body.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                client.newCall(request).execute()
+                client.newCall(request).execute().use { _ -> }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Fallback handled smoothly
             }
         } else {
-            delay(1000)
+            delay(400)
         }
 
         val item = MusicGenerationItem(
@@ -253,18 +269,18 @@ object AthenaService {
     }
 
     /**
-     * Create & Edit Images using gemini-nano-banana-2.1
+     * Create & Edit Images using gemini-2.5-flash-image
      */
     suspend fun generateOrEditImage(
         prompt: String,
         aspectRatio: String = "1:1",
         isEditMode: Boolean = false
     ): Result<ImageGenerationItem> = withContext(Dispatchers.IO) {
-        val apiKey = try { BuildConfig.GEMINI_API_KEY } catch (e: Exception) { "" }
+        val apiKey = CreativeHubAiService.resolveEffectiveApiKey()
 
-        if (apiKey.isNotBlank() && !apiKey.contains("MY_GEMINI_API_KEY") && !apiKey.contains("PLACEHOLDER")) {
+        if (apiKey.isNotBlank()) {
             try {
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-nano-banana-2.1:generateContent?key=$apiKey"
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent"
                 val body = JSONObject().apply {
                     put("contents", JSONArray().put(JSONObject().apply {
                         put("parts", JSONArray().put(JSONObject().put("text", prompt)))
@@ -280,20 +296,23 @@ object AthenaService {
 
                 val request = Request.Builder()
                     .url(endpoint)
+                    .addHeader("x-goog-api-key", apiKey)
                     .post(body.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                client.newCall(request).execute()
+                client.newCall(request).execute().use { _ -> }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Handled gracefully
             }
         } else {
-            delay(1000)
+            delay(400)
         }
 
         val imageItem = ImageGenerationItem(
             prompt = prompt,
-            model = "gemini-nano-banana-2.1",
+            model = "gemini-2.5-flash-image",
             aspectRatio = aspectRatio,
             title = prompt.take(32) + (if (prompt.length > 32) "..." else ""),
             isEdited = isEditMode
@@ -309,11 +328,11 @@ object AthenaService {
         aspectRatio: String = "16:9",
         isAnimateImage: Boolean = false
     ): Result<VideoGenerationItem> = withContext(Dispatchers.IO) {
-        val apiKey = try { BuildConfig.GEMINI_API_KEY } catch (e: Exception) { "" }
+        val apiKey = CreativeHubAiService.resolveEffectiveApiKey()
 
-        if (apiKey.isNotBlank() && !apiKey.contains("MY_GEMINI_API_KEY") && !apiKey.contains("PLACEHOLDER")) {
+        if (apiKey.isNotBlank()) {
             try {
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-fast-generate-preview:generateVideos?key=$apiKey"
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-fast-generate-preview:generateVideos"
                 val body = JSONObject().apply {
                     put("prompt", if (isAnimateImage) "Animate photo with realistic acoustic motion: $prompt" else prompt)
                     put("config", JSONObject().apply {
@@ -325,15 +344,18 @@ object AthenaService {
 
                 val request = Request.Builder()
                     .url(endpoint)
+                    .addHeader("x-goog-api-key", apiKey)
                     .post(body.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                client.newCall(request).execute()
+                client.newCall(request).execute().use { _ -> }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Handled gracefully
             }
         } else {
-            delay(1200)
+            delay(400)
         }
 
         val videoItem = VideoGenerationItem(
@@ -426,12 +448,12 @@ Evaluation: Standing wave parameters are within nominal operational parameters. 
         userPrompt: String = "Extract, analyze, and synthesize all text, diagrams, formulas, and theoretical paradoxes from this document for the Council of 42 scientific debate.",
         preferredModel: AthenaChatModel = AthenaChatModel.FLASH
     ): Result<String> = withContext(Dispatchers.IO) {
-        val apiKey = try { BuildConfig.GEMINI_API_KEY } catch (e: Exception) { "" }
+        val apiKey = CreativeHubAiService.resolveEffectiveApiKey()
 
-        if (apiKey.isNotBlank() && !apiKey.contains("MY_GEMINI_API_KEY") && !apiKey.contains("PLACEHOLDER")) {
+        if (apiKey.isNotBlank()) {
             try {
                 val modelId = preferredModel.modelId
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent?key=$apiKey"
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent"
 
                 val partsArray = JSONArray().apply {
                     put(JSONObject().put("text", userPrompt))
@@ -472,21 +494,25 @@ Evaluation: Standing wave parameters are within nominal operational parameters. 
 
                 val request = Request.Builder()
                     .url(endpoint)
+                    .header("x-goog-api-key", apiKey)
                     .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                val response = client.newCall(request).execute()
-                val responseString = response.body?.string() ?: ""
+                client.newCall(request).execute().use { response ->
+                    val responseString = response.body?.string() ?: ""
 
-                if (response.isSuccessful) {
-                    val root = JSONObject(responseString)
-                    val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
-                    val parts = candidate?.optJSONObject("content")?.optJSONArray("parts")
-                    val reply = parts?.optJSONObject(0)?.optString("text")
-                    if (!reply.isNullOrBlank()) {
-                        return@withContext Result.success(reply.trim())
+                    if (response.isSuccessful) {
+                        val root = JSONObject(responseString)
+                        val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
+                        val parts = candidate?.optJSONObject("content")?.optJSONArray("parts")
+                        val reply = parts?.optJSONObject(0)?.optString("text")
+                        if (!reply.isNullOrBlank()) {
+                            return@withContext Result.success(reply.trim())
+                        }
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Fallback to offline document synthesis engine
             }

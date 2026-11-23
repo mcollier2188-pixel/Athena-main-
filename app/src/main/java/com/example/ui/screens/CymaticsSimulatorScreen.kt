@@ -57,6 +57,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -78,6 +79,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.audio.HarmonicToneGenerator
+import com.example.ui.theme.DarkEchoColors
 import com.example.ui.theme.EchoBg
 import com.example.ui.theme.EchoBgAlt
 import com.example.ui.theme.EchoCard
@@ -111,7 +113,7 @@ data class Particle(
 )
 
 enum class ParticlePalette(val label: String, val primary: Color, val accent: Color) {
-    SOLENT_CYAN("Cyan Biolum", EchoCyan, Color(0xFF80FFEA)),
+    SOLENT_CYAN("Cyan Biolum", DarkEchoColors.cyan, Color(0xFF80FFEA)),
     GOLD_STARLIGHT("Solar Gold", Color(0xFFFFD166), Color(0xFFFFE89E)),
     EMERALD_MATRIX("Emerald Glow", Color(0xFF06D6A0), Color(0xFF80FFD5)),
     AMETHYST_VORTEX("Sacred Violet", Color(0xFFB388FF), Color(0xFFE1BEE7))
@@ -230,13 +232,26 @@ fun CymaticsSimulatorScreen(
         frameTick++
     }
 
-    // Audio Sync Handler
+    // Audio Sync Handler (only stop global tone if this screen's sync mode started it)
+    var startedToneBySync by remember { mutableStateOf(false) }
     LaunchedEffect(syncAudioWithTone, frequencyHz) {
         if (syncAudioWithTone) {
+            startedToneBySync = true
             toneGenerator.updateFrequencies(listOf(frequencyHz))
             toneGenerator.start(frequencies = listOf(frequencyHz))
-        } else if (isTonePlaying && !syncAudioWithTone) {
-            toneGenerator.stop()
+        } else if (startedToneBySync) {
+            startedToneBySync = false
+            if (isTonePlaying) {
+                toneGenerator.stop()
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            if (startedToneBySync) {
+                toneGenerator.stop()
+            }
         }
     }
 
@@ -430,6 +445,9 @@ fun CymaticsSimulatorScreen(
                             .testTag("chladni_plate_canvas")
                     ) {
                         Canvas(modifier = Modifier.fillMaxSize()) {
+                            // Subscribe draw phase to physics frameTick updates
+                            if (frameTick < 0) return@Canvas
+
                             // Touch disturbance indicator
                             disturbancePoint?.let { touch ->
                                 val screenX = ((touch.x + 1f) / 2f) * size.width

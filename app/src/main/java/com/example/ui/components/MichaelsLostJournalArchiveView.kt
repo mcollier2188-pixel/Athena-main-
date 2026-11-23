@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.sp
 import com.example.ai.DolaVoiceManager
 import com.example.audio.HarmonicToneGenerator
 import com.example.audio.SoundEffectType
+import com.example.ui.theme.DarkEchoColors
 import com.example.ui.theme.EchoCard
 import com.example.ui.theme.EchoCardStroke
 import com.example.ui.theme.EchoCyan
@@ -90,7 +91,7 @@ private val AmberDola = Color(0xFFF59E0B)
  */
 enum class JournalDocCategory(val label: String, val color: Color, val icon: ImageVector) {
     ALL("All 24 Documents", Gold85Hz, Icons.Default.MenuBook),
-    CORE_MANUSCRIPT("Core Manuscript", EchoCyan, Icons.Default.Description),
+    CORE_MANUSCRIPT("Core Manuscript", DarkEchoColors.cyan, Icons.Default.Description),
     ATHENA_HANDBOOK("ATHENA Handbook", PurpleCouncil, Icons.Default.AutoAwesome),
     ENGINEERING_PCB("Engineering & PCB", EmeraldEngineer, Icons.Default.Build),
     CORE_DEVICES("8 Core Devices (ES-01..08)", AmberDola, Icons.Default.GraphicEq),

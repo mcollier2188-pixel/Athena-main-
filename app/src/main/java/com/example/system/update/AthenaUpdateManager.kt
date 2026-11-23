@@ -1,10 +1,9 @@
 package com.example.system.update
 
-import android.app.AlarmManager
-import android.app.PendingIntent
+import android.content.ClipData
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -15,7 +14,6 @@ import androidx.core.content.FileProvider
 import com.example.BuildConfig
 import com.example.MainActivity
 import java.io.File
-import java.io.FileOutputStream
 import kotlin.system.exitProcess
 
 /**
@@ -86,10 +84,12 @@ object AthenaUpdateManager {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to open unknown app sources settings", e)
-            val fallback = Intent(Settings.ACTION_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching {
+                val fallback = Intent(Settings.ACTION_SETTINGS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(fallback)
             }
-            context.startActivity(fallback)
         }
     }
 
@@ -104,18 +104,44 @@ object AthenaUpdateManager {
             context.startActivity(intent)
         } catch (e: Exception) {
             Log.e(TAG, "Developer options not available on device", e)
-            val fallback = Intent(Settings.ACTION_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching {
+                val fallback = Intent(Settings.ACTION_SETTINGS).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(fallback)
             }
-            context.startActivity(fallback)
         }
     }
 
     /**
-     * Discovers all available APK update packages located in app storage or staging folders.
+     * Imports a user-selected APK content URI into internal staging (`apk_builds/`) so it can be
+     * verified and installed via FileProvider under Android 11-16 Scoped Storage.
+     */
+    fun importApkFromUri(context: Context, uri: Uri, displayName: String? = null): File? {
+        return try {
+            val buildsDir = File(context.filesDir, "apk_builds").apply { mkdirs() }
+            val rawName = displayName?.takeIf { it.isNotBlank() } ?: "athena_imported_update.apk"
+            val sanitized = rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                .let { if (it.endsWith(".apk", ignoreCase = true)) it else "$it.apk" }
+            val targetFile = File(buildsDir, sanitized)
+            val stream = context.contentResolver.openInputStream(uri) ?: return null
+            stream.use { input ->
+                targetFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            if (targetFile.length() > 0L) targetFile else null
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to import APK from URI", e)
+            null
+        }
+    }
+
+    /**
+     * Discovers all available valid APK update packages located in app storage or staging folders.
      */
     fun detectAvailableUpdatePackages(context: Context): List<UpdatePackageInfo> {
-        val candidates = mutableListOf<File>()
+        val candidates = LinkedHashSet<File>()
 
         // 1. App apk_builds directory
         val buildsDir = File(context.filesDir, "apk_builds")
@@ -129,13 +155,13 @@ object AthenaUpdateManager {
             candidates.addAll(exportsDir.listFiles { f -> f.extension.equals("apk", ignoreCase = true) }?.toList() ?: emptyList())
         }
 
-        // 3. Cache directory
+        // 3. Cache exports directory
         val cacheDir = File(context.cacheDir, "exports")
         if (cacheDir.exists()) {
             candidates.addAll(cacheDir.listFiles { f -> f.extension.equals("apk", ignoreCase = true) }?.toList() ?: emptyList())
         }
 
-        // 4. Download directory
+        // 4. Download directory (legacy / broad storage access if readable)
         try {
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             if (downloadsDir != null && downloadsDir.exists()) {
@@ -147,23 +173,21 @@ object AthenaUpdateManager {
             Log.d(TAG, "Notice reading public downloads: ${e.message}")
         }
 
-        // If no packages exist yet, automatically generate an official staged release bundle
-        if (candidates.isEmpty()) {
-            val staged = stageDefaultUpdatePackage(context)
-            if (staged != null) {
-                candidates.add(staged)
-            }
-        }
-
         val pm = context.packageManager
-        return candidates.map { file ->
+        return candidates.mapNotNull { file ->
+            if (!file.exists() || file.length() <= 0L) return@mapNotNull null
             val archiveInfo = pm.getPackageArchiveInfo(file.absolutePath, PackageManager.GET_ACTIVITIES)
-            val versionStr = archiveInfo?.versionName ?: "v${BuildConfig.VERSION_NAME}-OTA"
-            val title = if (archiveInfo != null) {
-                archiveInfo.applicationInfo?.loadLabel(pm)?.toString() ?: file.nameWithoutExtension
-            } else {
-                file.nameWithoutExtension.replace('_', ' ').uppercase()
+            val isValid = archiveInfo != null
+            if (!isValid) return@mapNotNull null
+
+            archiveInfo?.applicationInfo?.apply {
+                sourceDir = file.absolutePath
+                publicSourceDir = file.absolutePath
             }
+            val versionStr = archiveInfo?.versionName?.let { "v$it" } ?: "v${BuildConfig.VERSION_NAME}-OTA"
+            val title = archiveInfo?.applicationInfo?.loadLabel(pm)?.toString()
+                ?.takeIf { it.isNotBlank() }
+                ?: file.nameWithoutExtension
 
             UpdatePackageInfo(
                 file = file,
@@ -171,56 +195,47 @@ object AthenaUpdateManager {
                 versionString = versionStr,
                 fileSizeBytes = file.length(),
                 modifiedAt = file.lastModified(),
-                isValidApk = file.exists() && file.length() > 0
+                isValidApk = true
             )
         }.sortedByDescending { it.modifiedAt }
     }
 
     /**
-     * Prepares a staged OTA update package in the app's internal builds directory.
-     */
-    fun stageDefaultUpdatePackage(context: Context): File? {
-        return try {
-            val buildsDir = File(context.filesDir, "apk_builds")
-            if (!buildsDir.exists()) buildsDir.mkdirs()
-
-            val updateFile = File(buildsDir, "athena_sovereign_update.apk")
-            if (!updateFile.exists() || updateFile.length() == 0L) {
-                // Write a lightweight manifest bundle header for staging
-                FileOutputStream(updateFile).use { out ->
-                    out.write("ATHENA_OTA_UPDATE_BUNDLE_HEADER\nVERSION=${BuildConfig.VERSION_NAME}\n".toByteArray())
-                    // Pad dummy bytes to simulate a valid file package size (~1.2 MB)
-                    val buffer = ByteArray(1024) { 0x5A }
-                    repeat(1200) {
-                        out.write(buffer)
-                    }
-                }
-            }
-            updateFile
-        } catch (e: Exception) {
-            Log.e(TAG, "Error staging default update package", e)
-            null
-        }
-    }
-
-    /**
      * Launches the native Android package installer for the chosen APK file.
+     * Automatically stages external files into internal `apk_builds/` if outside FileProvider roots.
      */
     fun triggerPackageInstall(context: Context, apkFile: File, currentScreen: String = "Cockpit"): Boolean {
-        if (!apkFile.exists()) return false
+        if (!apkFile.exists() || apkFile.length() <= 0L) return false
 
-        // 1. Arm recovery snapshot
+        // 1. Arm recovery snapshot synchronously
         saveStateForUpdateRecovery(context, currentScreen, apkFile.name)
 
         return try {
+            val internalFilesRoot = context.filesDir.canonicalPath
+            val internalCacheRoot = context.cacheDir.canonicalPath
+            val canonicalApkPath = apkFile.canonicalPath
+
+            val providerReadyFile = if (
+                canonicalApkPath.startsWith(internalFilesRoot) ||
+                canonicalApkPath.startsWith(internalCacheRoot)
+            ) {
+                apkFile
+            } else {
+                val stagedDir = File(context.filesDir, "apk_builds").apply { mkdirs() }
+                val stagedCopy = File(stagedDir, apkFile.name)
+                apkFile.copyTo(stagedCopy, overwrite = true)
+                stagedCopy
+            }
+
             val uri = FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",
-                apkFile
+                providerReadyFile
             )
 
             val installIntent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
+                clipData = ClipData.newRawUri(providerReadyFile.name, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
@@ -233,7 +248,7 @@ object AthenaUpdateManager {
     }
 
     /**
-     * Persists a recovery checkpoint before updating or restarting.
+     * Persists a recovery checkpoint synchronously (`commit()`) before updating or restarting.
      */
     fun saveStateForUpdateRecovery(context: Context, currentScreen: String, updateTitle: String) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -242,7 +257,7 @@ object AthenaUpdateManager {
             .putString(KEY_RECOVERY_SCREEN, currentScreen)
             .putLong(KEY_RECOVERY_TIME, System.currentTimeMillis())
             .putString(KEY_RECOVERY_TITLE, updateTitle)
-            .apply()
+            .commit()
     }
 
     /**
@@ -257,7 +272,6 @@ object AthenaUpdateManager {
         val time = prefs.getLong(KEY_RECOVERY_TIME, System.currentTimeMillis())
         val title = prefs.getString(KEY_RECOVERY_TITLE, "System Update") ?: "System Update"
 
-        // Clear flag
         prefs.edit().putBoolean(KEY_PENDING_RECOVERY, false).apply()
 
         return UpdateRecoveryInfo(
@@ -268,32 +282,21 @@ object AthenaUpdateManager {
     }
 
     /**
-     * Cleanly restarts ATHENA and auto-relaunches the main activity.
+     * Cleanly restarts ATHENA and auto-relaunches MainActivity without triggering Android 10-16
+     * Background Activity Launch (BAL) AlarmManager blocks.
      */
     fun triggerCleanAppRestart(context: Context, currentScreen: String = "Cockpit") {
         saveStateForUpdateRecovery(context, currentScreen, "Clean System Restart")
 
         try {
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-                ?: Intent(context, MainActivity::class.java)
-
-            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-
-            val pendingIntent = PendingIntent.getActivity(
-                context,
-                8888,
-                launchIntent,
-                PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
-            alarmManager?.set(AlarmManager.RTC, System.currentTimeMillis() + 350, pendingIntent)
+            val componentName = ComponentName(context, MainActivity::class.java)
+            val restartIntent = Intent.makeRestartActivityTask(componentName)
+            context.startActivity(restartIntent)
         } catch (e: Exception) {
-            Log.e(TAG, "Error scheduling alarm restart", e)
+            Log.e(TAG, "Error launching restart activity task", e)
         }
 
-        // Terminate current process cleanly
-        android.os.Process.killProcess(android.os.Process.myPid())
+        Runtime.getRuntime().exit(0)
         exitProcess(0)
     }
 }

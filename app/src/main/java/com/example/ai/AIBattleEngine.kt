@@ -155,7 +155,7 @@ object AIBattleEngine {
         roundNumber: Int,
         maxRounds: Int
     ): Result<DuelTurn> = withContext(Dispatchers.IO) {
-        val apiKey = try { BuildConfig.GEMINI_API_KEY } catch (e: Exception) { "" }
+        val apiKey = CreativeHubAiService.resolveEffectiveApiKey()
 
         val turnType = when {
             roundNumber == 1 && priorTurns.isEmpty() -> "OPENING_SALVO"
@@ -190,9 +190,9 @@ object AIBattleEngine {
             Keep your speech between 60 and 95 words. End with a distinct final punchline on a new line prefixed with "PUNCHLINE:".
         """.trimIndent()
 
-        if (apiKey.isNotBlank() && !apiKey.contains("MY_GEMINI_API_KEY") && !apiKey.contains("PLACEHOLDER")) {
+        if (apiKey.isNotBlank()) {
             try {
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
                 val jsonBody = JSONObject().apply {
                     put("contents", JSONArray().put(JSONObject().apply {
                         put("role", "user")
@@ -210,45 +210,49 @@ object AIBattleEngine {
 
                 val request = Request.Builder()
                     .url(endpoint)
+                    .header("x-goog-api-key", apiKey)
                     .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                val response = client.newCall(request).execute()
-                val responseString = response.body?.string() ?: ""
+                client.newCall(request).execute().use { response ->
+                    val responseString = response.body?.string() ?: ""
 
-                if (response.isSuccessful) {
-                    val root = JSONObject(responseString)
-                    val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
-                    val parts = candidate?.optJSONObject("content")?.optJSONArray("parts")
-                    val reply = parts?.optJSONObject(0)?.optString("text")?.trim() ?: ""
+                    if (response.isSuccessful) {
+                        val root = JSONObject(responseString)
+                        val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
+                        val parts = candidate?.optJSONObject("content")?.optJSONArray("parts")
+                        val reply = parts?.optJSONObject(0)?.optString("text")?.trim() ?: ""
 
-                    if (reply.isNotBlank()) {
-                        val lines = reply.lines()
-                        val punchlineIdx = lines.indexOfFirst { it.startsWith("PUNCHLINE:", ignoreCase = true) }
-                        val (argument, punchline) = if (punchlineIdx >= 0) {
-                            val arg = lines.take(punchlineIdx).joinToString("\n").trim()
-                            val punch = lines[punchlineIdx].removePrefix("PUNCHLINE:").removePrefix("punchline:").trim()
-                            Pair(arg, punch)
-                        } else {
-                            val lastLine = lines.lastOrNull()?.trim() ?: "The empirical data admits no other conclusion."
-                            val rest = lines.dropLast(1).joinToString("\n").trim()
-                            Pair(if (rest.isNotBlank()) rest else reply, lastLine)
-                        }
+                        if (reply.isNotBlank()) {
+                            val lines = reply.lines()
+                            val punchlineIdx = lines.indexOfFirst { it.startsWith("PUNCHLINE:", ignoreCase = true) }
+                            val (argument, punchline) = if (punchlineIdx >= 0) {
+                                val arg = lines.take(punchlineIdx).joinToString("\n").trim()
+                                val punch = lines[punchlineIdx].removePrefix("PUNCHLINE:").removePrefix("punchline:").trim()
+                                Pair(arg, punch)
+                            } else {
+                                val lastLine = lines.lastOrNull()?.trim() ?: "The empirical data admits no other conclusion."
+                                val rest = lines.dropLast(1).joinToString("\n").trim()
+                                Pair(if (rest.isNotBlank()) rest else reply, lastLine)
+                            }
 
-                        val momentum = 45 + Random.nextInt(25)
-                        return@withContext Result.success(
-                            DuelTurn(
-                                speakerId = speaker.id,
-                                speakerName = speaker.name,
-                                roundNumber = roundNumber,
-                                turnType = turnType,
-                                argumentText = argument,
-                                keyPunchline = punchline.ifBlank { "Theoretical consistency demands this paradigm." },
-                                momentumScore = momentum
+                            val momentum = 45 + Random.nextInt(25)
+                            return@withContext Result.success(
+                                DuelTurn(
+                                    speakerId = speaker.id,
+                                    speakerName = speaker.name,
+                                    roundNumber = roundNumber,
+                                    turnType = turnType,
+                                    argumentText = argument,
+                                    keyPunchline = punchline.ifBlank { "Theoretical consistency demands this paradigm." },
+                                    momentumScore = momentum
+                                )
                             )
-                        )
+                        }
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Fallback to offline synthesis below
             }
@@ -279,9 +283,9 @@ object AIBattleEngine {
         beta: CombatantPersona,
         turns: List<DuelTurn>
     ): Result<DuelVerdict> = withContext(Dispatchers.IO) {
-        val apiKey = try { BuildConfig.GEMINI_API_KEY } catch (e: Exception) { "" }
+        val apiKey = CreativeHubAiService.resolveEffectiveApiKey()
 
-        if (apiKey.isNotBlank() && !apiKey.contains("MY_GEMINI_API_KEY") && !apiKey.contains("PLACEHOLDER")) {
+        if (apiKey.isNotBlank()) {
             try {
                 val transcript = turns.joinToString("\n\n") {
                     "[Round ${it.roundNumber} - ${it.speakerName}]: ${it.argumentText} (Punchline: \"${it.keyPunchline}\")"
@@ -305,7 +309,7 @@ object AIBattleEngine {
                     "betaScore": integer (0 to 100)
                 """.trimIndent()
 
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
                 val jsonBody = JSONObject().apply {
                     put("contents", JSONArray().put(JSONObject().apply {
                         put("role", "user")
@@ -319,33 +323,37 @@ object AIBattleEngine {
 
                 val request = Request.Builder()
                     .url(endpoint)
+                    .header("x-goog-api-key", apiKey)
                     .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                val response = client.newCall(request).execute()
-                val responseString = response.body?.string() ?: ""
+                client.newCall(request).execute().use { response ->
+                    val responseString = response.body?.string() ?: ""
 
-                if (response.isSuccessful) {
-                    val root = JSONObject(responseString)
-                    val text = root.optJSONArray("candidates")?.optJSONObject(0)
-                        ?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text")
+                    if (response.isSuccessful) {
+                        val root = JSONObject(responseString)
+                        val text = root.optJSONArray("candidates")?.optJSONObject(0)
+                            ?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)?.optString("text")
 
-                    if (!text.isNullOrBlank()) {
-                        val json = JSONObject(text)
-                        return@withContext Result.success(
-                            DuelVerdict(
-                                winnerName = json.optString("winnerName", "Dialectic Synthesis"),
-                                verdictType = json.optString("verdictType", "DIALECTIC SYNTHESIS"),
-                                synthesisSummary = json.optString("synthesisSummary", "Both intelligences pushed the boundaries of theoretical physics."),
-                                decisivePoint = json.optString("decisivePoint", "Coupling dynamic boundary Casimir modes to topological protection manifolds."),
-                                fallacyBreakdown = json.optString("fallacyBreakdown", "Neither combatant fully accounted for thermal phonon decoherence at 310 K."),
-                                recommendedConsensus = json.optString("recommendedConsensus", "Enforce 42.600 Hz acoustic phase locking across boundary cavities."),
-                                alphaScore = json.optInt("alphaScore", 88),
-                                betaScore = json.optInt("betaScore", 92)
+                        if (!text.isNullOrBlank()) {
+                            val json = JSONObject(text)
+                            return@withContext Result.success(
+                                DuelVerdict(
+                                    winnerName = json.optString("winnerName", "Dialectic Synthesis"),
+                                    verdictType = json.optString("verdictType", "DIALECTIC SYNTHESIS"),
+                                    synthesisSummary = json.optString("synthesisSummary", "Both intelligences pushed the boundaries of theoretical physics."),
+                                    decisivePoint = json.optString("decisivePoint", "Coupling dynamic boundary Casimir modes to topological protection manifolds."),
+                                    fallacyBreakdown = json.optString("fallacyBreakdown", "Neither combatant fully accounted for thermal phonon decoherence at 310 K."),
+                                    recommendedConsensus = json.optString("recommendedConsensus", "Enforce 42.600 Hz acoustic phase locking across boundary cavities."),
+                                    alphaScore = json.optInt("alphaScore", 88),
+                                    betaScore = json.optInt("betaScore", 92)
+                                )
                             )
-                        )
+                        }
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Fallback below
             }

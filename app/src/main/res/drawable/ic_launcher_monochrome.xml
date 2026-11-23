@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer Harmonic Ring -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M54,28 A26,26 0 1,1 53.99,28 Z"
+        android:strokeWidth="4.5"
+        android:strokeColor="#FFFFFF" />
+    <!-- Inner Standing Wave Crest ("A" / Resonance Peak) -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M38,68 L54,36 L70,68 M43,58 L65,58"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeColor="#FFFFFF" />
+</vector>

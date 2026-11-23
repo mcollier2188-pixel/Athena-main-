@@ -604,6 +604,7 @@ private fun DolaAudioRmsWaveform(rmsLevel: Float) {
         label = "phase"
     )
 
+    val echoColors = com.example.ui.theme.LocalEchoColors.current
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
@@ -626,7 +627,7 @@ private fun DolaAudioRmsWaveform(rmsLevel: Float) {
             val y2 = centerY + sin((i + 1) * 0.25f + phase) * amplitude
 
             drawLine(
-                color = EchoCyan,
+                color = echoColors.cyan,
                 start = Offset(x1, y1),
                 end = Offset(x2, y2),
                 strokeWidth = 2.dp.toPx(),

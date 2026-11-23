@@ -71,6 +71,7 @@ fun NodeMapCanvas(
                 }
             }
     ) {
+        val echoColors = com.example.ui.theme.LocalEchoColors.current
         Canvas(modifier = Modifier.matchParentSize()) {
             val w = size.width
             val h = size.height
@@ -79,7 +80,7 @@ fun NodeMapCanvas(
             val gridStep = 40.dp.toPx()
             for (gx in 0..(w / gridStep).toInt()) {
                 drawLine(
-                    color = EchoCardStroke.copy(alpha = 0.35f),
+                    color = echoColors.cardStroke.copy(alpha = 0.35f),
                     start = Offset(gx * gridStep, 0f),
                     end = Offset(gx * gridStep, h),
                     strokeWidth = 1f
@@ -87,7 +88,7 @@ fun NodeMapCanvas(
             }
             for (gy in 0..(h / gridStep).toInt()) {
                 drawLine(
-                    color = EchoCardStroke.copy(alpha = 0.35f),
+                    color = echoColors.cardStroke.copy(alpha = 0.35f),
                     start = Offset(0f, gy * gridStep),
                     end = Offset(w, gy * gridStep),
                     strokeWidth = 1f
@@ -108,7 +109,7 @@ fun NodeMapCanvas(
 
                 val isConnectedToSelected = (i == selectedNodeIndex)
                 drawLine(
-                    color = if (isConnectedToSelected) EchoCyan.copy(alpha = 0.85f) else EchoCardStroke.copy(alpha = 0.65f),
+                    color = if (isConnectedToSelected) echoColors.cyan.copy(alpha = 0.85f) else echoColors.cardStroke.copy(alpha = 0.65f),
                     start = Offset(masterX, masterY),
                     end = Offset(nx, ny),
                     strokeWidth = if (isConnectedToSelected) 2.5f else 1.2f,
@@ -124,7 +125,7 @@ fun NodeMapCanvas(
                 val isMaster = (node.id == "N1")
 
                 val nodeColor = when {
-                    isMaster -> EchoGreen
+                    isMaster -> echoColors.green
                     node.baseRatio == 1 -> Color(0xFF38BDF8)
                     node.baseRatio == 2 -> Color(0xFF60A5FA)
                     node.baseRatio == 3 -> Color(0xFF818CF8)
@@ -152,7 +153,7 @@ fun NodeMapCanvas(
 
                 // White/contrast border
                 drawCircle(
-                    color = if (isSelected) Color.White else Color(0xFFE4EEF2).copy(alpha = 0.8f),
+                    color = if (isSelected) (if (echoColors.isDark) Color.White else echoColors.text) else echoColors.text.copy(alpha = 0.8f),
                     radius = if (isSelected) 9f else 6.5f,
                     center = Offset(nx, ny),
                     style = Stroke(width = if (isSelected) 2.5f else 1f)
@@ -165,7 +166,7 @@ fun NodeMapCanvas(
                     style = TextStyle(
                         fontSize = if (isSelected) 12.sp else 10.sp,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        color = if (isSelected) Color.White else EchoText.copy(alpha = 0.85f)
+                        color = if (isSelected) (if (echoColors.isDark) Color.White else echoColors.text) else echoColors.text.copy(alpha = 0.85f)
                     )
                 )
 

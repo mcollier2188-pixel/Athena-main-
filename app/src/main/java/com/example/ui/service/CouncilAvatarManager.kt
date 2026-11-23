@@ -33,12 +33,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.DarkEchoColors
 import com.example.ui.theme.EchoAmber
 import com.example.ui.theme.EchoBlue
 import com.example.ui.theme.EchoCyan
@@ -77,7 +79,7 @@ object CouncilAvatarManager {
         roleTitle = "Chief Polymath & Quantum Systems Architect",
         roleBadge = "CHIEF POLYMATH (IQ 185)",
         iqScore = 185,
-        primaryColor = EchoCyan,
+        primaryColor = DarkEchoColors.cyan,
         haloColor = Color(0xFF38BDF8),
         icon = Icons.Default.AutoAwesome,
         tagline = "Unified field topologies, bio-cybernetic consciousness & non-linear thermodynamics",
@@ -97,7 +99,7 @@ object CouncilAvatarManager {
         roleTitle = "Exotic Physics Engine & Singularity AI",
         roleBadge = "EXOTIC PHYSICS & AI (IQ 188)",
         iqScore = 188,
-        primaryColor = EchoBlue,
+        primaryColor = DarkEchoColors.blue,
         haloColor = Color(0xFF60A5FA),
         icon = Icons.Default.Psychology,
         tagline = "Relativistic space-time tensors, quantum entanglement lattices & artificial super-intelligence",
@@ -117,7 +119,7 @@ object CouncilAvatarManager {
         roleTitle = "Cyber-Kinetic Hardware & Zero-Point Pioneer",
         roleBadge = "CYBER-KINETIC HARDWARE (IQ 182)",
         iqScore = 182,
-        primaryColor = EchoAmber,
+        primaryColor = DarkEchoColors.amber,
         haloColor = Color(0xFFFBBF24),
         icon = Icons.Default.Lightbulb,
         tagline = "Silicon photonics, neuromorphic substrates, zero-point Casimir energy & empirical disruption",
@@ -137,7 +139,7 @@ object CouncilAvatarManager {
         roleTitle = "Chief Engineer of ATHENA & Lead Systems Architect",
         roleBadge = "CHIEF ENGINEER (IQ 194)",
         iqScore = 194,
-        primaryColor = EchoGreen,
+        primaryColor = DarkEchoColors.green,
         haloColor = Color(0xFF69F0AE),
         icon = Icons.Default.Build,
         tagline = "Autonomous software compilation, reactive state telemetry, and turning theoretical physics into living laboratory code",
@@ -157,7 +159,7 @@ object CouncilAvatarManager {
         roleTitle = "Omni-Science Directorate & Universal Synthesizer",
         roleBadge = "DIRECTORATE OF 42 POLYMATHS (IQ 190+)",
         iqScore = 192,
-        primaryColor = EchoPurple,
+        primaryColor = DarkEchoColors.purple,
         haloColor = Color(0xFFC084FC),
         icon = Icons.Default.Diversity3,
         tagline = "Harmonized convergence of 42 world-leading polymaths across physics, genomics, computers, astronomy & engineering",
@@ -206,25 +208,34 @@ object CouncilAvatarManager {
         showHaloRing: Boolean = true,
         modifier: Modifier = Modifier
     ) {
-        val infiniteTransition = rememberInfiniteTransition(label = "halo_transition_${profile.id}")
-        val haloAlpha by infiniteTransition.animateFloat(
-            initialValue = 0.35f,
-            targetValue = 0.85f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(1100, easing = LinearEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "halo_alpha"
-        )
-        val pulseRing by infiniteTransition.animateFloat(
-            initialValue = 0.96f,
-            targetValue = 1.06f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(1300, easing = LinearEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "pulse_ring"
-        )
+        val haloAlpha: Float
+        val pulseRing: Float
+        if (isActive && showHaloRing) {
+            val infiniteTransition = rememberInfiniteTransition(label = "halo_transition_${profile.id}")
+            val animatedAlpha by infiniteTransition.animateFloat(
+                initialValue = 0.35f,
+                targetValue = 0.85f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(1100, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "halo_alpha"
+            )
+            val animatedPulse by infiniteTransition.animateFloat(
+                initialValue = 0.96f,
+                targetValue = 1.06f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(1300, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "pulse_ring"
+            )
+            haloAlpha = animatedAlpha
+            pulseRing = animatedPulse
+        } else {
+            haloAlpha = 0.35f
+            pulseRing = 1f
+        }
 
         Box(
             modifier = modifier.size(size + if (showHaloRing && isActive) 12.dp else 4.dp),
@@ -234,7 +245,11 @@ object CouncilAvatarManager {
             if (showHaloRing) {
                 Box(
                     modifier = Modifier
-                        .size(size + (if (isActive) 10.dp else 4.dp) * (if (isActive) pulseRing else 1f))
+                        .size(size + if (isActive) 10.dp else 4.dp)
+                        .graphicsLayer {
+                            scaleX = pulseRing
+                            scaleY = pulseRing
+                        }
                         .clip(CircleShape)
                         .background(
                             profile.haloColor.copy(
@@ -283,31 +298,36 @@ object CouncilAvatarManager {
         isThinking: Boolean = true,
         modifier: Modifier = Modifier
     ) {
-        val infiniteTransition = rememberInfiniteTransition(label = "cognitive_telemetry_indicator")
-        val p1 by infiniteTransition.animateFloat(
-            initialValue = 0.2f,
-            targetValue = 0.95f,
-            animationSpec = infiniteRepeatable(tween(420, easing = LinearEasing), RepeatMode.Reverse),
-            label = "p1"
-        )
-        val p2 by infiniteTransition.animateFloat(
-            initialValue = 0.85f,
-            targetValue = 0.25f,
-            animationSpec = infiniteRepeatable(tween(330, easing = LinearEasing), RepeatMode.Reverse),
-            label = "p2"
-        )
-        val p3 by infiniteTransition.animateFloat(
-            initialValue = 0.3f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(510, easing = LinearEasing), RepeatMode.Reverse),
-            label = "p3"
-        )
-        val p4 by infiniteTransition.animateFloat(
-            initialValue = 0.7f,
-            targetValue = 0.15f,
-            animationSpec = infiniteRepeatable(tween(280, easing = LinearEasing), RepeatMode.Reverse),
-            label = "p4"
-        )
+        val heights = if (isThinking) {
+            val infiniteTransition = rememberInfiniteTransition(label = "cognitive_telemetry_indicator")
+            val p1 by infiniteTransition.animateFloat(
+                initialValue = 0.2f,
+                targetValue = 0.95f,
+                animationSpec = infiniteRepeatable(tween(420, easing = LinearEasing), RepeatMode.Reverse),
+                label = "p1"
+            )
+            val p2 by infiniteTransition.animateFloat(
+                initialValue = 0.85f,
+                targetValue = 0.25f,
+                animationSpec = infiniteRepeatable(tween(330, easing = LinearEasing), RepeatMode.Reverse),
+                label = "p2"
+            )
+            val p3 by infiniteTransition.animateFloat(
+                initialValue = 0.3f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(tween(510, easing = LinearEasing), RepeatMode.Reverse),
+                label = "p3"
+            )
+            val p4 by infiniteTransition.animateFloat(
+                initialValue = 0.7f,
+                targetValue = 0.15f,
+                animationSpec = infiniteRepeatable(tween(280, easing = LinearEasing), RepeatMode.Reverse),
+                label = "p4"
+            )
+            listOf(p1, p2, p3, p4)
+        } else {
+            listOf(0.4f, 0.4f, 0.4f, 0.4f)
+        }
 
         Row(
             modifier = modifier
@@ -316,12 +336,14 @@ object CouncilAvatarManager {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            val heights = if (isThinking) listOf(p1, p2, p3, p4) else listOf(0.4f, 0.4f, 0.4f, 0.4f)
             heights.forEach { frac ->
                 Box(
                     modifier = Modifier
                         .width(2.5.dp)
-                        .height((12 * frac).dp)
+                        .height(12.dp)
+                        .graphicsLayer {
+                            scaleY = frac
+                        }
                         .clip(RoundedCornerShape(1.dp))
                         .background(color)
                 )
@@ -405,7 +427,7 @@ object CouncilAvatarManager {
             ) {
                 CognitiveTelemetryPulseIndicator(
                     color = profile.primaryColor,
-                    isThinking = isActive || timestamp != null
+                    isThinking = isActive
                 )
                 if (isActive) {
                     Text(

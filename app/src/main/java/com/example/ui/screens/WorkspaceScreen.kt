@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material.icons.filled.HelpOutline
 import com.example.ui.components.ItemActionBottomSheet
 import com.example.ui.components.LongPressItemPayload
@@ -1127,6 +1128,9 @@ fun WorkspaceScreen(
                     viewModel.updateItem(updated)
                     activeEditingNote = null
                 },
+                onSaveAsNewNote = { newTitle, newBody ->
+                    viewModel.createNote(name = newTitle, initialText = newBody, tags = note.tags)
+                },
                 onDelete = {
                     viewModel.moveToTrash(note.id)
                     activeEditingNote = null
@@ -1485,26 +1489,49 @@ fun NoteEditorDialog(
     note: WorkspaceItem,
     allFolders: List<WorkspaceItem>,
     onSave: (WorkspaceItem) -> Unit,
+    onSaveAsNewNote: ((String, String) -> Unit)? = null,
     onDelete: () -> Unit,
     onOpenReader: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    var title by remember { mutableStateOf(note.name) }
-    var text by remember { mutableStateOf(note.text) }
-    var tags by remember { mutableStateOf(note.tags) }
-    var isPinned by remember { mutableStateOf(note.isPinned) }
-    var parentId by remember { mutableStateOf(note.parentId) }
+    var title by rememberSaveable(note.id) { mutableStateOf(note.name) }
+    var text by rememberSaveable(note.id) { mutableStateOf(note.text) }
+    var tags by rememberSaveable(note.id) { mutableStateOf(note.tags) }
+    var isPinned by rememberSaveable(note.id) { mutableStateOf(note.isPinned) }
+    var parentId by rememberSaveable(note.id) { mutableStateOf(note.parentId) }
     var showFolderMenu by remember { mutableStateOf(false) }
     var showDolaEditorDialog by remember { mutableStateOf(false) }
     var dolaEditorMode by remember { mutableStateOf(DolaAiMode.REFINE) }
+
+    val isDirty = title != note.name ||
+        text != note.text ||
+        tags != note.tags ||
+        isPinned != note.isPinned ||
+        parentId != note.parentId
+
+    fun dismissSavingIfDirty() {
+        if (isDirty) {
+            onSave(
+                note.copy(
+                    name = title.ifBlank { "Untitled Note" },
+                    text = text,
+                    tags = tags,
+                    isPinned = isPinned,
+                    parentId = parentId
+                )
+            )
+        } else {
+            onDismiss()
+        }
+    }
 
     val wordCount = remember(text) {
         if (text.isBlank()) 0 else text.trim().split("\\s+".toRegex()).size
     }
 
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { dismissSavingIfDirty() },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
@@ -1523,7 +1550,15 @@ fun NoteEditorDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = {
-                        onSave(note.copy(name = title, text = text, tags = tags, isPinned = isPinned, parentId = parentId))
+                        onSave(
+                            note.copy(
+                                name = title.ifBlank { "Untitled Note" },
+                                text = text,
+                                tags = tags,
+                                isPinned = isPinned,
+                                parentId = parentId
+                            )
+                        )
                     }) {
                         Icon(Icons.Default.Check, contentDescription = "Save", tint = EchoCyan)
                     }
@@ -1554,7 +1589,7 @@ fun NoteEditorDialog(
                         IconButton(onClick = onDelete) {
                             Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color(0xFFEF4444))
                         }
-                        IconButton(onClick = onDismiss) {
+                        IconButton(onClick = { dismissSavingIfDirty() }) {
                             Icon(Icons.Default.Close, contentDescription = "Close", tint = EchoText)
                         }
                     }
@@ -1774,7 +1809,14 @@ fun NoteEditorDialog(
                         initialMode = dolaEditorMode,
                         onUseReplacement = { text = it },
                         onSaveAsNewNote = { newText ->
-                            onSave(note.copy(name = "$title (Revised)", text = newText))
+                            val revisedTitle = "${title.ifBlank { "Untitled Note" }} (Revised)"
+                            if (onSaveAsNewNote != null) {
+                                onSaveAsNewNote(revisedTitle, newText)
+                                Toast.makeText(context, "Saved as new note: $revisedTitle", Toast.LENGTH_SHORT).show()
+                                showDolaEditorDialog = false
+                            } else {
+                                onSave(note.copy(name = revisedTitle, text = newText))
+                            }
                         },
                         onDismiss = { showDolaEditorDialog = false }
                     )

@@ -41,12 +41,15 @@ abstract class FirestoreEmulatorTestBase {
     val emulatorRunning = try {
       java.net.Socket().use { socket ->
         socket.connect(java.net.InetSocketAddress(EMULATOR_HOST, FIRESTORE_PORT), 300)
-        true
       }
+      java.net.Socket().use { socket ->
+        socket.connect(java.net.InetSocketAddress(EMULATOR_HOST, AUTH_PORT), 300)
+      }
+      true
     } catch (e: Exception) {
       false
     }
-    org.junit.Assume.assumeTrue("Firebase Firestore emulator is not running on $EMULATOR_HOST:$FIRESTORE_PORT; skipping live emulator test.", emulatorRunning)
+    org.junit.Assume.assumeTrue("Firebase Firestore/Auth emulators are not running on $EMULATOR_HOST:$FIRESTORE_PORT,$AUTH_PORT; skipping live emulator test.", emulatorRunning)
 
     val app = if (FirebaseApp.getApps(context).isEmpty()) {
       FirebaseApp.initializeApp(
