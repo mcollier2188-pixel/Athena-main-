@@ -84,6 +84,7 @@ import androidx.compose.ui.unit.sp
 import com.example.ai.DolaVoiceManager
 import com.example.audio.HarmonicToneGenerator
 import com.example.audio.SoundEffectType
+import com.example.model.MasterManualRepository
 import com.example.ui.theme.DarkEchoColors
 import com.example.ui.theme.EchoBg
 import com.example.ui.theme.EchoBgAlt
@@ -96,6 +97,7 @@ import com.example.ui.theme.EchoText
 
 enum class FaqCategory(val displayName: String, val icon: ImageVector, val accentColor: Color) {
     ALL("All Topics", Icons.Default.HelpOutline, DarkEchoColors.cyan),
+    MASTER_MANUAL("2.0-PROD Manual", Icons.Default.MenuBook, DarkEchoColors.cyan),
     AI_BATTLE_ARENA("1-on-1 AI Battle", Icons.Default.FlashOn, Color(0xFFFF3366)),
     DOCUMENT_SCANNER("CameraX Scanner", Icons.Default.DocumentScanner, Color(0xFF00E5FF)),
     ENERGY_RESONANCE("42.6 Hz Resonance", Icons.Default.GraphicEq, Color(0xFF00F5D4)),
@@ -123,7 +125,26 @@ data class FaqItem(
 )
 
 object FaqDataRepository {
-    val items: List<FaqItem> = listOf(
+    fun getItems(context: Context? = null): List<FaqItem> {
+        val manualItems = MasterManualRepository.getChapters(context).map { chapter ->
+            FaqItem(
+                id = chapter.id,
+                category = FaqCategory.MASTER_MANUAL,
+                title = "Manual Ch ${chapter.number.toString().padStart(2, '0')}: ${chapter.title}",
+                summary = "${chapter.subtitle} (v${MasterManualRepository.DOCUMENT_VERSION} • ${MasterManualRepository.TARGET_RELEASE})",
+                detailedAnswer = chapter.content,
+                bulletPoints = chapter.summaryBullets,
+                tags = chapter.tags,
+                isAthenaFlagship = true
+            )
+        }
+        return manualItems + baseItems
+    }
+
+    val items: List<FaqItem>
+        get() = getItems(null)
+
+    private val baseItems: List<FaqItem> = listOf(
         // ================= ATHENA FLAGSHIP 1: GENIUS COUNCIL =================
         FaqItem(
             id = "athena_genius_council",
@@ -519,7 +540,8 @@ object FaqDataRepository {
         )
     )
 
-    fun getFullCapabilitiesDocumentation(): String {
+    fun getFullCapabilitiesDocumentation(context: Context? = null): String {
+        val allItems = getItems(context)
         val sb = StringBuilder()
         sb.append("================================================================================\n")
         sb.append("ATHENA & UNIFIED WORKSTATION: MASTER CAPABILITIES & EXHAUSTIVE SPECIFICATION\n")
@@ -528,9 +550,14 @@ object FaqDataRepository {
         sb.append("This application is an integrated scientific, creative, and cognitive workstation uniting three\n")
         sb.append("disciplines: Multi-Agent Cognitive AI (ATHENA), Acoustic Resonance Physics, and Personal Research Workspace.\n\n")
 
-        val categories = FaqCategory.entries.filter { it != FaqCategory.ALL }
+        sb.append("================================================================================\n")
+        sb.append("PART I: ATHENA AI STUDIO // MASTER OPERATIONAL & TECHNICAL MANUAL (2.0-PROD)\n")
+        sb.append("================================================================================\n\n")
+        sb.append(MasterManualRepository.getFullManualMarkdown(context).trim()).append("\n\n")
+
+        val categories = FaqCategory.entries.filter { it != FaqCategory.ALL && it != FaqCategory.MASTER_MANUAL }
         for (cat in categories) {
-            val catItems = items.filter { it.category == cat }
+            val catItems = allItems.filter { it.category == cat }
             if (catItems.isNotEmpty()) {
                 sb.append("--------------------------------------------------------------------------------\n")
                 sb.append("MODULE: ${cat.displayName.uppercase()}\n")
@@ -564,9 +591,12 @@ fun WorkspaceFaqTab(
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf(FaqCategory.ALL) }
-    var expandedItemIds by remember { mutableStateOf(setOf("athena_genius_council", "athena_gemini_playground", "athena_apk_builder")) }
+    var expandedItemIds by remember { mutableStateOf(setOf("master_manual_ch_01", "athena_genius_council", "athena_gemini_playground", "athena_apk_builder")) }
     var currentlySpeakingId by remember { mutableStateOf<String?>(null) }
+    var showFullManualReader by remember { mutableStateOf(false) }
     val voiceManager = remember { DolaVoiceManager.getInstance(context) }
+    val allFaqItems = remember(context) { FaqDataRepository.getItems(context) }
+    val fullManualMarkdown = remember(context) { MasterManualRepository.getFullManualMarkdown(context) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -574,9 +604,9 @@ fun WorkspaceFaqTab(
         }
     }
 
-    val filteredItems = remember(searchQuery, selectedCategory) {
+    val filteredItems = remember(allFaqItems, searchQuery, selectedCategory) {
         val query = searchQuery.trim().lowercase()
-        FaqDataRepository.items.filter { item ->
+        allFaqItems.filter { item ->
             val matchesCategory = selectedCategory == FaqCategory.ALL || item.category == selectedCategory
             val matchesQuery = query.isEmpty() ||
                 item.title.lowercase().contains(query) ||
@@ -586,6 +616,22 @@ fun WorkspaceFaqTab(
                 item.tags.any { it.lowercase().contains(query) }
             matchesCategory && matchesQuery
         }
+    }
+
+    if (showFullManualReader) {
+        ReaderDialog(
+            title = MasterManualRepository.DOCUMENT_TITLE,
+            subtitle = MasterManualRepository.DOCUMENT_SUBTITLE,
+            content = fullManualMarkdown,
+            onSaveQuoteToFieldJournal = { quote, chapterTitle ->
+                val snippet = quote.trim().lines().firstOrNull()?.take(36) ?: "Manual Excerpt"
+                onSaveToWorkspaceNote(
+                    "Manual Quote: $snippet",
+                    "“$quote”\n\n— Source: $chapterTitle"
+                )
+            },
+            onDismiss = { showFullManualReader = false }
+        )
     }
 
     Column(
@@ -735,7 +781,7 @@ fun WorkspaceFaqTab(
         ) {
             FaqCategory.entries.forEach { cat ->
                 val isSelected = selectedCategory == cat
-                val count = if (cat == FaqCategory.ALL) FaqDataRepository.items.size else FaqDataRepository.items.count { it.category == cat }
+                val count = if (cat == FaqCategory.ALL) allFaqItems.size else allFaqItems.count { it.category == cat }
                 FilterChip(
                     selected = isSelected,
                     onClick = {
@@ -768,7 +814,7 @@ fun WorkspaceFaqTab(
             }
         }
 
-        // Master Actions Bar (Copy All to Word or Save to Note)
+        // Master Actions Bar (Read 2.0-PROD Manual, Copy All, or Save to Note)
         Card(
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = EchoBgAlt),
@@ -784,39 +830,54 @@ fun WorkspaceFaqTab(
             ) {
                 Button(
                     onClick = {
-                        toneGenerator.playChime(SoundEffectType.SUCCESS)
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clip = ClipData.newPlainText("Complete ATHENA Capabilities Guide", FaqDataRepository.getFullCapabilitiesDocumentation())
-                        clipboard.setPrimaryClip(clip)
-                        Toast.makeText(context, "Full Capabilities Guide copied to clipboard! Ready to paste into Word.", Toast.LENGTH_LONG).show()
+                        toneGenerator.playChime(SoundEffectType.TAP)
+                        showFullManualReader = true
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = EchoCyan, contentColor = EchoOnCyan),
                     shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.weight(1f).testTag("faq_open_master_manual_btn")
+                ) {
+                    Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("2.0 Manual", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        toneGenerator.playChime(SoundEffectType.SUCCESS)
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("Complete ATHENA Capabilities Guide", FaqDataRepository.getFullCapabilitiesDocumentation(context))
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "Full Capabilities & 2.0-PROD Manual copied to clipboard!", Toast.LENGTH_LONG).show()
+                    },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = EchoCyan),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                     modifier = Modifier.weight(1f).testTag("faq_copy_all_btn")
                 ) {
                     Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Copy Entire Guide", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Copy Guide", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
 
                 OutlinedButton(
                     onClick = {
                         toneGenerator.playChime(SoundEffectType.SUCCESS)
                         onSaveToWorkspaceNote(
-                            "ATHENA Master Capabilities & Reference Manual",
-                            FaqDataRepository.getFullCapabilitiesDocumentation()
+                            "ATHENA Master Capabilities & 2.0-PROD Manual",
+                            FaqDataRepository.getFullCapabilitiesDocumentation(context)
                         )
-                        Toast.makeText(context, "Created 'ATHENA Master Capabilities' note!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Created 'ATHENA Master Capabilities & 2.0-PROD Manual' note!", Toast.LENGTH_SHORT).show()
                     },
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = EchoCyan),
                     shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                     modifier = Modifier.weight(1f).testTag("faq_save_note_all_btn")
                 ) {
                     Icon(Icons.Default.NoteAdd, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Save as Note", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Save Note", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }

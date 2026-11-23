@@ -29,6 +29,9 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -47,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -55,6 +59,7 @@ import com.example.model.Chapter
 import com.example.model.ChapterRepository
 import com.example.model.FieldDoc
 import com.example.model.FieldDocRepository
+import com.example.model.MasterManualRepository
 import com.example.model.NetworkNode
 import com.example.model.TimelineEra
 import com.example.model.TimelineItem
@@ -69,6 +74,7 @@ import com.example.ui.theme.EchoCyan
 import com.example.ui.theme.EchoCyanSoft
 import com.example.ui.theme.EchoGreen
 import com.example.ui.theme.EchoMuted
+import com.example.ui.theme.EchoOnCyan
 import com.example.ui.theme.EchoText
 
 import com.example.audio.HarmonicToneGenerator
@@ -82,8 +88,13 @@ fun ArchiveScreen(
     onSaveQuoteToFieldJournal: (quote: String, chapterTitle: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var selectedEra by remember { mutableStateOf<TimelineEra?>(null) }
     var activeReaderItem by remember { mutableStateOf<Triple<String, String, String>?>(null) }
+
+    val fullManualMarkdown = remember(context) { MasterManualRepository.getFullManualMarkdown(context) }
+    val manualChapters = remember(context) { MasterManualRepository.getChapters(context) }
+    val fieldDocs = remember(context) { FieldDocRepository.getDocuments(context) }
 
     val filteredTimeline = remember(selectedEra) {
         if (selectedEra == null) TimelineRepository.items
@@ -92,7 +103,7 @@ fun ArchiveScreen(
 
     Box(modifier = modifier.fillMaxSize().background(EchoBg)) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().testTag("archive_lazy_column"),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
@@ -182,6 +193,120 @@ fun ArchiveScreen(
                 }
             }
 
+            // ATHENA AI Studio 2.0-PROD Master Operational & Technical Manual Card
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("archive_master_manual_card"),
+                    colors = CardDefaults.cardColors(containerColor = EchoCard),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(EchoCyan.copy(alpha = 0.55f)))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                                    contentDescription = null,
+                                    tint = EchoCyan,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = "ATHENA AI Studio // Master Manual",
+                                        fontWeight = FontWeight.Bold,
+                                        color = EchoText,
+                                        fontSize = 15.sp
+                                    )
+                                    Text(
+                                        text = "v${MasterManualRepository.DOCUMENT_VERSION} · ${MasterManualRepository.TARGET_RELEASE} · FACT Standard",
+                                        fontSize = 11.sp,
+                                        color = EchoCyan,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "Complete 10-chapter operational & technical manual covering system call signs (Whizz Kid, Whiskey, Rabbit, Gemini), Moto G15 & Fire TV 4K topology, UK Smart Meter £160/£200 safeguards, GameSir G7 SE & Pioneer DDJ-400 input matrices, 3D UV video wrapping, AGE game engine, and operator runbooks.",
+                            fontSize = 12.sp,
+                            color = EchoMuted,
+                            lineHeight = 18.sp
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                activeReaderItem = Triple(
+                                    MasterManualRepository.DOCUMENT_TITLE,
+                                    MasterManualRepository.DOCUMENT_SUBTITLE,
+                                    fullManualMarkdown
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = EchoCyan,
+                                contentColor = EchoOnCyan
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("open_master_manual_full_button")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Read Complete 2.0-PROD Manual (10 Chapters)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        if (manualChapters.isNotEmpty()) {
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                text = "Jump to Chapter:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = EchoMuted
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(manualChapters, key = { it.id }) { ch ->
+                                    FilterChip(
+                                        selected = false,
+                                        onClick = {
+                                            activeReaderItem = Triple(
+                                                "Chapter ${ch.number.toString().padStart(2, '0')} — ${ch.title}",
+                                                "${ch.subtitle} · v${MasterManualRepository.DOCUMENT_VERSION}",
+                                                ch.content
+                                            )
+                                        },
+                                        label = {
+                                            Text(
+                                                text = "Ch ${ch.number.toString().padStart(2, '0')}: ${ch.title}",
+                                                fontSize = 11.sp,
+                                                maxLines = 1
+                                            )
+                                        },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            containerColor = EchoBgAlt,
+                                            labelColor = EchoText
+                                        ),
+                                        modifier = Modifier.testTag("master_manual_chip_${ch.number}")
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Era Filter Row
             item {
                 Column {
@@ -203,7 +328,7 @@ fun ArchiveScreen(
                                 label = { Text("All Eras") },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = EchoCyan,
-                                    selectedLabelColor = Color(0xFF062431),
+                                    selectedLabelColor = EchoOnCyan,
                                     containerColor = EchoCard,
                                     labelColor = EchoText
                                 )
@@ -221,7 +346,7 @@ fun ArchiveScreen(
                                 },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = EchoCyan,
-                                    selectedLabelColor = Color(0xFF062431),
+                                    selectedLabelColor = EchoOnCyan,
                                     containerColor = EchoCard,
                                     labelColor = EchoText
                                 )
@@ -347,7 +472,7 @@ fun ArchiveScreen(
                 )
             }
 
-            items(FieldDocRepository.documents, key = { it.id }) { doc ->
+            items(fieldDocs, key = { it.id }) { doc ->
                 FieldDocCard(
                     doc = doc,
                     onClick = {
