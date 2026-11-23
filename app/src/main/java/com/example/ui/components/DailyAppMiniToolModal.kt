@@ -1,11 +1,13 @@
 package com.example.ui.components
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.BatteryManager
 import android.os.Build
+import android.os.PersistableBundle
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.Canvas
@@ -186,10 +188,13 @@ private fun IconButton(onClick: () -> Unit, tooltip: String, content: @Composabl
 @Composable
 fun CalculatorToolView() {
     var display by remember { mutableStateOf("0") }
+    var pendingSum by remember { mutableDoubleStateOf(0.0) }
+    var resetOnNextDigit by remember { mutableStateOf(false) }
     var tipPercent by remember { mutableFloatStateOf(15f) }
     var peopleCount by remember { mutableIntStateOf(1) }
 
-    val billAmount = display.toDoubleOrNull() ?: 0.0
+    val entryAmount = display.toDoubleOrNull() ?: 0.0
+    val billAmount = if (resetOnNextDigit) pendingSum else (pendingSum + entryAmount)
     val tipAmount = billAmount * (tipPercent / 100.0)
     val totalAmount = billAmount + tipAmount
     val perPerson = if (peopleCount > 0) totalAmount / peopleCount else totalAmount
@@ -209,7 +214,12 @@ fun CalculatorToolView() {
                     .padding(16.dp),
                 horizontalAlignment = Alignment.End
             ) {
-                Text(text = "Amount: $$display", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                val formattedAmount = if (pendingSum > 0.0 && !resetOnNextDigit) {
+                    String.format(Locale.US, "%.2f", billAmount)
+                } else {
+                    display
+                }
+                Text(text = "Amount: $$formattedAmount", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 if (billAmount > 0) {
                     Text(
                         text = "Tip (${tipPercent.roundToInt()}%): $${String.format(Locale.US, "%.2f", tipAmount)} | Total: $${String.format(Locale.US, "%.2f", totalAmount)}",
@@ -268,10 +278,42 @@ fun CalculatorToolView() {
                         Button(
                             onClick = {
                                 when (key) {
-                                    "C" -> display = "0"
-                                    "⌫" -> display = if (display.length > 1) display.dropLast(1) else "0"
-                                    "." -> if (!display.contains(".")) display += "."
-                                    else -> display = if (display == "0") key else display + key
+                                    "C" -> {
+                                        display = "0"
+                                        pendingSum = 0.0
+                                        resetOnNextDigit = false
+                                    }
+                                    "⌫" -> {
+                                        if (resetOnNextDigit) {
+                                            resetOnNextDigit = false
+                                            display = "0"
+                                        } else {
+                                            display = if (display.length > 1) display.dropLast(1) else "0"
+                                        }
+                                    }
+                                    "+" -> {
+                                        if (!resetOnNextDigit) {
+                                            pendingSum += (display.toDoubleOrNull() ?: 0.0)
+                                            display = String.format(Locale.US, "%.2f", pendingSum).trimEnd('0').trimEnd('.')
+                                            resetOnNextDigit = true
+                                        }
+                                    }
+                                    "." -> {
+                                        if (resetOnNextDigit) {
+                                            display = "0."
+                                            resetOnNextDigit = false
+                                        } else if (!display.contains(".")) {
+                                            display += "."
+                                        }
+                                    }
+                                    else -> {
+                                        if (resetOnNextDigit || display == "0") {
+                                            display = if (key == "00" || key == "000") "0" else key
+                                            resetOnNextDigit = false
+                                        } else {
+                                            display += key
+                                        }
+                                    }
                                 }
                             },
                             modifier = Modifier.weight(1f).height(46.dp),
@@ -555,6 +597,7 @@ fun DoodleSketchToolView() {
     var currentPath by remember { mutableStateOf<Path?>(null) }
     var currentColor by remember { mutableStateOf(Color.Cyan) }
     var strokeWidth by remember { mutableFloatStateOf(6f) }
+    var drawTick by remember { mutableIntStateOf(0) }
 
     val colors = listOf(Color.Cyan, Color.Magenta, Color.Yellow, Color.White, Color.Green, Color.Red)
 
@@ -603,20 +646,29 @@ fun DoodleSketchToolView() {
                         onDragStart = { offset ->
                             val p = Path().apply { moveTo(offset.x, offset.y) }
                             currentPath = p
+                            drawTick++
                         },
                         onDrag = { change, _ ->
+                            change.consume()
                             currentPath?.lineTo(change.position.x, change.position.y)
+                            drawTick++
                         },
                         onDragEnd = {
                             currentPath?.let {
                                 paths.add(DrawPath(it, currentColor, strokeWidth))
                             }
                             currentPath = null
+                            drawTick++
+                        },
+                        onDragCancel = {
+                            currentPath = null
+                            drawTick++
                         }
                     )
                 }
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
+                if (drawTick < 0) return@Canvas
                 for (p in paths) {
                     drawPath(
                         path = p.path,
@@ -1025,7 +1077,15 @@ fun PasswordGeneratorToolView() {
             }
             OutlinedButton(
                 onClick = {
-                    val clip = ClipData.newPlainText("password", password)
+                    val clip = ClipData.newPlainText("password", password).apply {
+                        description.extras = PersistableBundle().apply {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                            } else {
+                                putBoolean("android.content.extra.IS_SENSITIVE", true)
+                            }
+                        }
+                    }
                     (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
                     Toast.makeText(context, "Password copied!", Toast.LENGTH_SHORT).show()
                 }

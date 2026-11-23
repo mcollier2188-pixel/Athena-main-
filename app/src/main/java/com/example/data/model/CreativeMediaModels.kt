@@ -8,7 +8,7 @@ data class CreativeVideoItem(
     val views: String,
     val category: String,
     val summary: String,
-    val youtubeVideoId: String = "dQw4w9WgXcQ",
+    val youtubeVideoId: String = "",
     val chapters: List<String> = emptyList(),
     val videoUriString: String = ""
 )
@@ -19,7 +19,7 @@ data class CreativePlaylistItem(
     val author: String,
     val videoCount: String,
     val description: String,
-    val sampleVideoId: String = "dQw4w9WgXcQ",
+    val sampleVideoId: String = "",
     val isCustom: Boolean = false,
     val videos: List<CreativeVideoItem> = emptyList()
 )

@@ -994,6 +994,7 @@ private fun AthenaMusicView(onSaveNote: (String) -> Unit) {
                     Spacer(Modifier.height(10.dp))
 
                     // Waveform visualizer
+                    val echoColors = com.example.ui.theme.LocalEchoColors.current
                     Canvas(modifier = Modifier.fillMaxWidth().height(36.dp).background(EchoBgAlt, RoundedCornerShape(6.dp))) {
                         val w = size.width
                         val h = size.height
@@ -1002,7 +1003,7 @@ private fun AthenaMusicView(onSaveNote: (String) -> Unit) {
                         for (i in 0 until bars) {
                             val barH = (sin((i.toDouble() + if (isPlaying) 1.2 else 0.0) * 0.5).toFloat() * 0.4f + 0.5f) * h
                             drawRect(
-                                color = if (isPlaying) EchoGreen else EchoCyan,
+                                color = if (isPlaying) echoColors.green else echoColors.cyan,
                                 topLeft = Offset(i * barW + 2, (h - barH) / 2),
                                 size = androidx.compose.ui.geometry.Size(barW - 4, barH)
                             )
@@ -1225,12 +1226,13 @@ private fun AthenaImageStudioView(onSaveNote: (String) -> Unit) {
                             .border(1.dp, EchoCyan, RoundedCornerShape(8.dp)),
                         contentAlignment = Alignment.Center
                     ) {
+                        val crtColors = com.example.ui.theme.DarkEchoColors
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val w = size.width
                             val h = size.height
                             for (step in 1..6) {
                                 drawCircle(
-                                    color = EchoCyan.copy(alpha = 0.15f * step),
+                                    color = crtColors.cyan.copy(alpha = 0.15f * step),
                                     radius = (w * 0.08f) * step,
                                     center = Offset(w / 2, h / 2),
                                     style = Stroke(width = 2.dp.toPx())
@@ -1238,9 +1240,9 @@ private fun AthenaImageStudioView(onSaveNote: (String) -> Unit) {
                             }
                         }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = EchoCyan, modifier = Modifier.size(32.dp))
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = crtColors.cyan, modifier = Modifier.size(32.dp))
                             Spacer(Modifier.height(4.dp))
-                            Text("Rendered with gemini-nano-banana-2.1", fontSize = 11.sp, color = EchoCyan, fontWeight = FontWeight.Bold)
+                            Text("Rendered with gemini-nano-banana-2.1", fontSize = 11.sp, color = crtColors.cyan, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -1436,6 +1438,7 @@ private fun AthenaVeoVideoView(onSaveNote: (String) -> Unit) {
                             .border(1.dp, EchoCyan, RoundedCornerShape(8.dp)),
                         contentAlignment = Alignment.Center
                     ) {
+                        val crtColors = com.example.ui.theme.DarkEchoColors
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val w = size.width
                             val h = size.height
@@ -1446,7 +1449,7 @@ private fun AthenaVeoVideoView(onSaveNote: (String) -> Unit) {
                                 val y = (h / 2) + (sin((i / 8.0) + (if (isPlaying) 1.5 else 0.0)).toFloat() * (h * 0.25f))
                                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
                             }
-                            drawPath(path, color = EchoCyan, style = Stroke(width = 3.dp.toPx()))
+                            drawPath(path, color = crtColors.cyan, style = Stroke(width = 3.dp.toPx()))
                         }
 
                         IconButton(

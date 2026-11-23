@@ -89,6 +89,7 @@ import com.example.ai.DolaVoiceManager
 import com.example.audio.HarmonicToneGenerator
 import com.example.audio.SoundEffectType
 import com.example.ui.components.WarpWaveEffect
+import com.example.ui.theme.DarkEchoColors
 import com.example.ui.theme.EchoBg
 import com.example.ui.theme.EchoCard
 import com.example.ui.theme.EchoCardStroke
@@ -97,6 +98,7 @@ import com.example.ui.theme.EchoDarkSurface
 import com.example.ui.theme.EchoGreen
 import com.example.ui.theme.EchoMuted
 import com.example.ui.theme.EchoText
+import com.example.ui.theme.LocalEchoColors
 import com.example.ui.viewmodel.WorkspaceViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -117,7 +119,7 @@ private val CouncilPurple = Color(0xFFA855F7)
 enum class BridgeConnectionStatus(val label: String, val badgeColor: Color, val description: String) {
     STANDBY(
         label = "STANDBY",
-        badgeColor = EchoMuted,
+        badgeColor = DarkEchoColors.muted,
         description = "Bridge initialized. Carrier oscillators standing by for departure."
     ),
     CALIBRATING(
@@ -1091,6 +1093,7 @@ private fun CircularFrequencyArcGauge(
             .testTag("circular_85hz_frequency_gauge"),
         contentAlignment = Alignment.Center
     ) {
+        val echoColors = LocalEchoColors.current
         Canvas(modifier = Modifier.size(190.dp)) {
             val strokeWidth = 12.dp.toPx()
             val diameter = size.minDimension - strokeWidth - 8.dp.toPx()
@@ -1103,7 +1106,7 @@ private fun CircularFrequencyArcGauge(
 
             // 1. Background Arc Track
             drawArc(
-                color = EchoDarkSurface,
+                color = echoColors.darkSurface,
                 startAngle = startAngle,
                 sweepAngle = sweepAngle,
                 useCenter = false,
@@ -1152,7 +1155,7 @@ private fun CircularFrequencyArcGauge(
                 val endY = center.y + (outerR * sin(angleRad)).toFloat()
 
                 drawLine(
-                    color = if (fraction == 1.0f) Gold85Hz else EchoMuted,
+                    color = if (fraction == 1.0f) Gold85Hz else echoColors.muted,
                     start = Offset(startX, startY),
                     end = Offset(endX, endY),
                     strokeWidth = if (fraction == 1.0f) 3.dp.toPx() else 1.5.dp.toPx(),

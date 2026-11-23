@@ -10,53 +10,69 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isValidUserNote(data, userId) {
+    function isValidUserNote(data, userId, noteId) {
       return data.keys().hasAll(['id', 'userId', 'name', 'kind']) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'name', 'text', 'tags', 'kind',
+               'parentId', 'isPinned', 'createdAt', 'updatedAt'
+             ]) &&
              data.userId == userId &&
-             data.id is string &&
+             data.id is string && data.id == noteId &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 120 &&
              data.kind in ['note', 'folder', 'file'] &&
-             (!('text' in data) || data.text is string) &&
-             (!('tags' in data) || data.tags is string) &&
-             (!('parentId' in data) || data.parentId == null || data.parentId is string) &&
-             (!('isPinned' in data) || data.isPinned is bool);
+             (!('text' in data) || (data.text is string && data.text.size() <= 100000)) &&
+             (!('tags' in data) || (data.tags is string && data.tags.size() <= 200)) &&
+             (!('parentId' in data) || data.parentId == null || (data.parentId is string && data.parentId.size() <= 100)) &&
+             (!('isPinned' in data) || data.isPinned is bool) &&
+             (!('createdAt' in data) || data.createdAt == null || data.createdAt is timestamp) &&
+             (!('updatedAt' in data) || data.updatedAt == null || data.updatedAt is timestamp);
     }
 
-    function isValidAiCreation(data, userId) {
+    function isValidAiCreation(data, userId, generationId) {
       return data.keys().hasAll(['id', 'userId', 'type', 'prompt', 'modelUsed']) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'type', 'prompt', 'resultData', 'modelUsed', 'createdAt'
+             ]) &&
              data.userId == userId &&
-             data.id is string &&
+             data.id is string && data.id == generationId &&
              data.type in ['image', 'video_text', 'video_image', 'music', 'transcript', 'chat'] &&
-             data.prompt is string && data.prompt.size() <= 2000 &&
-             data.modelUsed is string &&
-             (!('resultData' in data) || data.resultData is string);
+             data.prompt is string && data.prompt.size() > 0 && data.prompt.size() <= 2000 &&
+             data.modelUsed is string && data.modelUsed.size() > 0 && data.modelUsed.size() <= 80 &&
+             (!('resultData' in data) || (data.resultData is string && data.resultData.size() <= 500000)) &&
+             (!('createdAt' in data) || data.createdAt == null || data.createdAt is timestamp);
     }
 
     function isValidUserProfile(data, userId) {
-      return data.userId == userId &&
-             (!('displayName' in data) || data.displayName is string) &&
-             (!('email' in data) || data.email is string) &&
-             (!('favoriteFrequency' in data) || data.favoriteFrequency is number);
+      return data.keys().hasAll(['userId']) &&
+             data.keys().hasOnly([
+               'userId', 'displayName', 'email', 'favoriteFrequency', 'updatedAt'
+             ]) &&
+             data.userId == userId &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 100)) &&
+             (!('favoriteFrequency' in data) || data.favoriteFrequency is number) &&
+             (!('updatedAt' in data) || data.updatedAt == null || data.updatedAt is timestamp);
     }
 
     match /users/{userId} {
-      allow read, write: if isOwner(userId);
+      allow read: if isOwner(userId);
+      allow write: if false;
 
       match /notes/{noteId} {
         allow read: if isOwner(userId);
-        allow create, update: if isOwner(userId) && isValidUserNote(request.resource.data, userId);
+        allow create, update: if isOwner(userId) && isValidUserNote(request.resource.data, userId, noteId);
         allow delete: if isOwner(userId);
       }
 
       match /generations/{generationId} {
         allow read: if isOwner(userId);
-        allow create, update: if isOwner(userId) && isValidAiCreation(request.resource.data, userId);
+        allow create, update: if isOwner(userId) && isValidAiCreation(request.resource.data, userId, generationId);
         allow delete: if isOwner(userId);
       }
 
       match /profile/{profileId} {
         allow read: if isOwner(userId);
-        allow create, update: if isOwner(userId) && isValidUserProfile(request.resource.data, userId);
+        allow create, update: if isOwner(userId) && profileId == 'current' && isValidUserProfile(request.resource.data, userId);
         allow delete: if isOwner(userId);
       }
     }

@@ -84,6 +84,7 @@ import androidx.compose.ui.unit.sp
 import com.example.ai.DolaVoiceManager
 import com.example.audio.HarmonicToneGenerator
 import com.example.audio.SoundEffectType
+import com.example.ui.theme.DarkEchoColors
 import com.example.ui.theme.EchoBg
 import com.example.ui.theme.EchoBgAlt
 import com.example.ui.theme.EchoCardStroke
@@ -94,7 +95,7 @@ import com.example.ui.theme.EchoOnCyan
 import com.example.ui.theme.EchoText
 
 enum class FaqCategory(val displayName: String, val icon: ImageVector, val accentColor: Color) {
-    ALL("All Topics", Icons.Default.HelpOutline, EchoCyan),
+    ALL("All Topics", Icons.Default.HelpOutline, DarkEchoColors.cyan),
     AI_BATTLE_ARENA("1-on-1 AI Battle", Icons.Default.FlashOn, Color(0xFFFF3366)),
     DOCUMENT_SCANNER("CameraX Scanner", Icons.Default.DocumentScanner, Color(0xFF00E5FF)),
     ENERGY_RESONANCE("42.6 Hz Resonance", Icons.Default.GraphicEq, Color(0xFF00F5D4)),
@@ -102,7 +103,7 @@ enum class FaqCategory(val displayName: String, val icon: ImageVector, val accen
     ATHENA_PLAYGROUND("Gemini Playground", Icons.Default.AutoAwesome, Color(0xFF80D8FF)),
     ATHENA_BUILDER("APK Builder", Icons.Default.Build, Color(0xFFFFD54F)),
     ACOUSTICS("Acoustics & Resonance", Icons.Default.GraphicEq, Color(0xFF00E5FF)),
-    WORKSPACE("Workspace & Persistence", Icons.Default.Storage, EchoGreen),
+    WORKSPACE("Workspace & Persistence", Icons.Default.Storage, DarkEchoColors.green),
     CREATIVE_MEDIA("Media Vault & Cinema", Icons.Default.VideoLibrary, Color(0xFFFF80AB)),
     SYSTEM_DRAWER("System & Display", Icons.Default.Settings, Color(0xFFB388FF)),
     LONG_PRESS("Long-Press Gestures", Icons.Default.TouchApp, Color(0xFFFFD54F)),

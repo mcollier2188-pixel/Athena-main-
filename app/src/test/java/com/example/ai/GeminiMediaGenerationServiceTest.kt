@@ -41,11 +41,13 @@ class GeminiMediaGenerationServiceTest {
             isAiGenerated = true
         )
 
-        MediaVaultRepository.addItem(testItem)
-        val items = MediaVaultRepository.items.value
-        assertTrue(items.any { it.id == "test_item_1" })
-
-        MediaVaultRepository.removeItem("test_item_1")
+        try {
+            MediaVaultRepository.addItem(testItem)
+            val items = MediaVaultRepository.items.value
+            assertTrue(items.any { it.id == "test_item_1" })
+        } finally {
+            MediaVaultRepository.removeItem("test_item_1")
+        }
         val itemsAfterRemove = MediaVaultRepository.items.value
         assertTrue(itemsAfterRemove.none { it.id == "test_item_1" })
     }

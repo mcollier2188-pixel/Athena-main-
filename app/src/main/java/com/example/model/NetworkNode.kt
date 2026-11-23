@@ -10,13 +10,13 @@ data class NetworkNode(
     val batteryVoltage: Double,
     val batteryCapacityAh: Double,
     val setting: String,
-    val frequency: Double = (baseRatio * 42.6)
+    val frequency: Double = (baseRatio * 426) / 10.0
 ) {
     val totalBatteryWh: Double
         get() = batteryVoltage * batteryCapacityAh
 
     val comparedToMaster: Double
-        get() = frequency / 85.2
+        get() = frequency / MASTER_FREQUENCY_HZ
 
     companion object {
         const val BASE_FREQUENCY_HZ = 42.6

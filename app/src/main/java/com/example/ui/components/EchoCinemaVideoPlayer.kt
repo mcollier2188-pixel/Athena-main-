@@ -80,16 +80,21 @@ open class CinemaVideoSource(
     val subtitle: String,
     val isUploadedFile: Boolean = false
 ) {
+    open fun resolveUri(context: Context): Uri = Uri.parse(uriString)
+
     class PresetAsset(
-        filename: String,
+        val rawResourceName: String,
         displayTitle: String,
         displaySubtitle: String
     ) : CinemaVideoSource(
-        uriString = "android.resource://com.example/raw/$filename",
+        uriString = "android.resource://com.example/raw/$rawResourceName",
         title = displayTitle,
         subtitle = displaySubtitle,
         isUploadedFile = false
-    )
+    ) {
+        override fun resolveUri(context: Context): Uri =
+            Uri.parse("android.resource://${context.packageName}/raw/$rawResourceName")
+    }
 
     data class UserUpload(
         val contentUri: Uri,
@@ -135,6 +140,14 @@ fun EchoCinemaVideoPlayer(
     var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
     var mediaPlayerRef by remember { mutableStateOf<MediaPlayer?>(null) }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching { videoViewRef?.stopPlayback() }
+            videoViewRef = null
+            mediaPlayerRef = null
+        }
+    }
+
     fun toggleRotation() {
         videoRotationDegrees = if (videoRotationDegrees == 0f) 90f else (videoRotationDegrees + 90f) % 360f
     }
@@ -149,6 +162,10 @@ fun EchoCinemaVideoPlayer(
 
     // Polling player position when playing and syncing to global manager
     LaunchedEffect(isPlaying, videoViewRef) {
+        if (!isPlaying) {
+            GlobalVideoPlaybackManager.setPlaying(false)
+            return@LaunchedEffect
+        }
         while (isPlaying) {
             videoViewRef?.let { vv ->
                 try {
@@ -205,12 +222,14 @@ fun EchoCinemaVideoPlayer(
         ) {
             AndroidView(
                 factory = { ctx ->
+                    val targetUri = videoSource.resolveUri(ctx)
                     VideoView(ctx).apply {
                         videoViewRef = this
-                        setVideoURI(Uri.parse(videoSource.uriString))
+                        tag = targetUri.toString()
+                        setVideoURI(targetUri)
                         setOnPreparedListener { mp ->
                             mediaPlayerRef = mp
-                            durationMs = mp.duration.toLong()
+                            durationMs = mp.duration.toLong().coerceAtLeast(1L)
                             isLoading = false
                             mp.isLooping = true
                             if (isMuted) {
@@ -223,26 +242,39 @@ fun EchoCinemaVideoPlayer(
                         }
                         setOnCompletionListener {
                             isPlaying = false
+                            GlobalVideoPlaybackManager.setPlaying(false)
                             onVideoCompleted()
                         }
                         setOnErrorListener { _, _, _ ->
                             isLoading = false
+                            isPlaying = false
                             true
                         }
                     }
                 },
                 update = { vv ->
-                    if (vv.tag != videoSource.uriString) {
-                        vv.tag = videoSource.uriString
+                    val targetUri = videoSource.resolveUri(vv.context)
+                    val targetTag = targetUri.toString()
+                    if (vv.tag != targetTag) {
+                        vv.tag = targetTag
                         isLoading = true
                         isPlaying = false
                         currentPositionMs = 0L
                         try {
                             vv.stopPlayback()
-                            vv.setVideoURI(Uri.parse(videoSource.uriString))
+                            vv.setVideoURI(targetUri)
                             vv.start()
                             isPlaying = true
                         } catch (_: Exception) {}
+                    }
+                },
+                onRelease = { vv ->
+                    runCatching {
+                        if (videoViewRef === vv) {
+                            videoViewRef = null
+                            mediaPlayerRef = null
+                        }
+                        vv.stopPlayback()
                     }
                 },
                 modifier = Modifier.fillMaxSize()

@@ -246,11 +246,11 @@ fun CircularChladniCanvas(
     initialDisplayMode: ChladniDisplayMode = ChladniDisplayMode.DUAL_MODE,
     onSaveSnapshot: ((presetName: String, frequency: Double, m: Int, n: Int, notes: String) -> Unit)? = null
 ) {
-    var displayMode by remember { mutableStateOf(initialDisplayMode) }
-    var selectedPreset by remember { mutableStateOf(initialPreset) }
-    var frequencyHz by remember { mutableDoubleStateOf(initialPreset.frequencyHz) }
-    var modalM by remember { mutableIntStateOf(initialPreset.m) }
-    var modalN by remember { mutableIntStateOf(initialPreset.n) }
+    var displayMode by remember(initialDisplayMode) { mutableStateOf(initialDisplayMode) }
+    var selectedPreset by remember(initialPreset) { mutableStateOf(initialPreset) }
+    var frequencyHz by remember(initialPreset) { mutableDoubleStateOf(initialPreset.frequencyHz) }
+    var modalM by remember(initialPreset) { mutableIntStateOf(initialPreset.m) }
+    var modalN by remember(initialPreset) { mutableIntStateOf(initialPreset.n) }
     var excitationAmplitude by remember { mutableFloatStateOf(1.0f) }
     var showNodalLines by remember { mutableStateOf(true) }
     var showTelemetryHud by remember { mutableStateOf(true) }
@@ -568,6 +568,7 @@ fun CircularChladniCanvas(
                         }
                     }
             ) {
+                val crtColors = com.example.ui.theme.DarkEchoColors
                 val center = Offset(size.width / 2f, size.height / 2f)
                 val plateRadius = (size.minDimension / 2f) * 0.92f
 
@@ -590,7 +591,7 @@ fun CircularChladniCanvas(
                 for (ring in 1..4) {
                     val r = plateRadius * (ring / 4f)
                     drawCircle(
-                        color = EchoCardStroke.copy(alpha = 0.35f),
+                        color = crtColors.cardStroke.copy(alpha = 0.35f),
                         radius = r,
                         center = center,
                         style = Stroke(width = 1.dp.toPx())
@@ -599,13 +600,13 @@ fun CircularChladniCanvas(
 
                 // Crosshairs
                 drawLine(
-                    color = EchoCardStroke.copy(alpha = 0.35f),
+                    color = crtColors.cardStroke.copy(alpha = 0.35f),
                     start = Offset(center.x - plateRadius, center.y),
                     end = Offset(center.x + plateRadius, center.y),
                     strokeWidth = 1.dp.toPx()
                 )
                 drawLine(
-                    color = EchoCardStroke.copy(alpha = 0.35f),
+                    color = crtColors.cardStroke.copy(alpha = 0.35f),
                     start = Offset(center.x, center.y - plateRadius),
                     end = Offset(center.x, center.y + plateRadius),
                     strokeWidth = 1.dp.toPx()
@@ -618,7 +619,8 @@ fun CircularChladniCanvas(
                         radius = plateRadius,
                         m = modalM,
                         n = modalN,
-                        glowAlpha = rimPulse
+                        glowAlpha = rimPulse,
+                        glowColor = crtColors.cyan
                     )
                 }
 
@@ -629,9 +631,9 @@ fun CircularChladniCanvas(
                         val py = center.y + p.y * plateRadius
 
                         val pColor = when (p.colorVariant) {
-                            0 -> EchoCyan
-                            1 -> EchoGreen
-                            else -> EchoAmber
+                            0 -> crtColors.cyan
+                            1 -> crtColors.green
+                            else -> crtColors.amber
                         }
 
                         drawCircle(
@@ -647,12 +649,12 @@ fun CircularChladniCanvas(
                     val dx = center.x + dp.x * plateRadius
                     val dy = center.y + dp.y * plateRadius
                     drawCircle(
-                        color = EchoAmber.copy(alpha = 0.4f),
+                        color = crtColors.amber.copy(alpha = 0.4f),
                         radius = 16.dp.toPx(),
                         center = Offset(dx, dy)
                     )
                     drawCircle(
-                        color = EchoAmber,
+                        color = crtColors.amber,
                         radius = 4.dp.toPx(),
                         center = Offset(dx, dy)
                     )
@@ -660,7 +662,7 @@ fun CircularChladniCanvas(
 
                 // 6. Brass/Cyan Glowing Perimeter Bezel
                 drawCircle(
-                    color = EchoCyan.copy(alpha = 0.3f * rimPulse),
+                    color = crtColors.cyan.copy(alpha = 0.3f * rimPulse),
                     radius = plateRadius + 2.dp.toPx(),
                     center = center,
                     style = Stroke(width = 3.dp.toPx())
@@ -958,9 +960,10 @@ private fun DrawScope.drawCircularNodalLines(
     radius: Float,
     m: Int,
     n: Int,
-    glowAlpha: Float = 1.0f
+    glowAlpha: Float = 1.0f,
+    glowColor: Color = com.example.ui.theme.DarkEchoColors.cyan
 ) {
-    val outerGlowColor = EchoCyan.copy(alpha = 0.28f * glowAlpha)
+    val outerGlowColor = glowColor.copy(alpha = 0.28f * glowAlpha)
     val innerLineColor = Color(0xFF64FFDA).copy(alpha = 0.85f * glowAlpha)
     val coreLineColor = Color.White.copy(alpha = 0.95f * glowAlpha)
 

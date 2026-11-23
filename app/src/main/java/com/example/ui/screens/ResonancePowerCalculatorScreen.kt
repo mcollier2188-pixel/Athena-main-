@@ -516,6 +516,7 @@ fun ResonancePowerCalculatorScreen(
 
                     Spacer(Modifier.height(8.dp))
 
+                    val echoColors = com.example.ui.theme.LocalEchoColors.current
                     Canvas(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -529,7 +530,7 @@ fun ResonancePowerCalculatorScreen(
 
                         // Draw baseline
                         drawLine(
-                            color = EchoCardStroke,
+                            color = echoColors.cardStroke,
                             start = Offset(0f, midY),
                             end = Offset(w, midY),
                             strokeWidth = 1f
@@ -564,13 +565,13 @@ fun ResonancePowerCalculatorScreen(
                         }
 
                         // Draw envelopes
-                        drawPath(envelopeUpper, color = EchoCyan.copy(alpha = 0.25f), style = Stroke(width = 1f))
-                        drawPath(envelopeLower, color = EchoCyan.copy(alpha = 0.25f), style = Stroke(width = 1f))
+                        drawPath(envelopeUpper, color = echoColors.cyan.copy(alpha = 0.25f), style = Stroke(width = 1f))
+                        drawPath(envelopeLower, color = echoColors.cyan.copy(alpha = 0.25f), style = Stroke(width = 1f))
 
                         // Draw active standing wave
                         drawPath(
                             path,
-                            color = if (isNearBedrockResonance) EchoGreen else EchoCyan,
+                            color = if (isNearBedrockResonance) echoColors.green else echoColors.cyan,
                             style = Stroke(width = 2.5f)
                         )
                     }

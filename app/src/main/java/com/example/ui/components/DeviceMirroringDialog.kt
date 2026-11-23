@@ -102,9 +102,6 @@ fun DeviceMirroringDialog(
 
     LaunchedEffect(Unit) {
         mirroringManager.refreshDisplays()
-        if (!status.isServerRunning) {
-            mirroringManager.startLocalMirrorServer()
-        }
     }
 
     AlertDialog(

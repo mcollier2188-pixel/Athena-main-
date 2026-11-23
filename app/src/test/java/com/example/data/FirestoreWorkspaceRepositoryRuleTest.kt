@@ -6,6 +6,7 @@ import com.example.data.firestore.FirestoreNote
 import com.example.data.firestore.FirestoreWorkspaceRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.tasks.await
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -77,13 +78,13 @@ class FirestoreWorkspaceRepositoryRuleTest : FirestoreEmulatorTestBase() {
 
         // Bob attempting to fetch Alice's note path directly
         try {
-            val doc = firestore.collection("users").document(aliceUid).collection("notes").document("alice_private_note").get().result
+            val doc = firestore.collection("users").document(aliceUid).collection("notes").document("alice_private_note").get().await()
             if (doc.exists()) {
                 fail("Bob should not be able to read Alice's note")
             }
-        } catch (e: Exception) {
-            // Expected security rules PERMISSION_DENIED
-            assertTrue(true)
+            fail("Expected PERMISSION_DENIED FirebaseFirestoreException")
+        } catch (e: com.google.firebase.firestore.FirebaseFirestoreException) {
+            assertEquals(com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED, e.code)
         }
     }
 

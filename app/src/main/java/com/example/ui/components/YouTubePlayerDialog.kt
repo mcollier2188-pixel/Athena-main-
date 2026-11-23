@@ -9,6 +9,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -134,18 +135,26 @@ fun YouTubePlayerDialog(
     var rotationDegrees by remember(defaultOrientationDegrees) { mutableFloatStateOf(defaultOrientationDegrees) }
     var showOverlayControls by remember { mutableStateOf(true) }
 
-    val isPlaylistMode = !playlistId.isNullOrBlank()
-    val youtubeWatchUrl = if (isPlaylistMode) {
-        "https://www.youtube.com/playlist?list=$playlistId"
-    } else {
-        "https://www.youtube.com/watch?v=$videoId"
+    val safeVideoId = remember(videoId) {
+        val trimmed = videoId.trim()
+        if (Regex("^[a-zA-Z0-9_-]{11}$").matches(trimmed)) trimmed else ""
+    }
+    val safePlaylistId = remember(playlistId) {
+        playlistId?.trim()?.takeIf { Regex("^[a-zA-Z0-9_-]+$").matches(it) }
     }
 
-    val embedHtml = remember(videoId, playlistId) {
-        val embedUrl = if (isPlaylistMode) {
-            "https://www.youtube.com/embed/videoseries?list=$playlistId&autoplay=1&playsinline=1&enablejsapi=1&rel=0&modestbranding=1"
-        } else {
-            "https://www.youtube.com/embed/$videoId?autoplay=1&playsinline=1&enablejsapi=1&rel=0&modestbranding=1"
+    val isPlaylistMode = !safePlaylistId.isNullOrBlank()
+    val youtubeWatchUrl = if (isPlaylistMode) {
+        "https://www.youtube.com/playlist?list=$safePlaylistId"
+    } else {
+        "https://www.youtube.com/watch?v=$safeVideoId"
+    }
+
+    val embedHtml = remember(safeVideoId, safePlaylistId) {
+        val embedUrl = when {
+            isPlaylistMode -> "https://www.youtube.com/embed/videoseries?list=$safePlaylistId&autoplay=1&playsinline=1&enablejsapi=1&rel=0&modestbranding=1"
+            safeVideoId.isNotEmpty() -> "https://www.youtube.com/embed/$safeVideoId?autoplay=1&playsinline=1&enablejsapi=1&rel=0&modestbranding=1"
+            else -> "about:blank"
         }
         """
         <!DOCTYPE html>
@@ -169,6 +178,21 @@ fun YouTubePlayerDialog(
         """.trimIndent()
     }
 
+    fun isAllowedYouTubeUrl(uri: Uri?): Boolean {
+        if (uri == null) return false
+        val scheme = uri.scheme?.lowercase() ?: return false
+        if (scheme == "about") return true
+        if (scheme != "https" && scheme != "http") return false
+        val host = uri.host?.lowercase() ?: return false
+        return host == "youtube.com" ||
+            host.endsWith(".youtube.com") ||
+            host == "youtube-nocookie.com" ||
+            host.endsWith(".youtube-nocookie.com") ||
+            host == "youtu.be" ||
+            host.endsWith(".googlevideo.com") ||
+            host.endsWith(".ytimg.com")
+    }
+
     fun toggleRotation() {
         toneGenerator.playChime(SoundEffectType.TAP)
         rotationDegrees = if (rotationDegrees == 0f) 90f else (rotationDegrees + 90f) % 360f
@@ -177,9 +201,9 @@ fun YouTubePlayerDialog(
     fun openInNativeApp() {
         toneGenerator.playChime(SoundEffectType.TAP)
         val appUri = if (isPlaylistMode) {
-            Uri.parse("vnd.youtube:playlist/$playlistId")
+            Uri.parse("vnd.youtube:playlist/$safePlaylistId")
         } else {
-            Uri.parse("vnd.youtube:$videoId")
+            Uri.parse("vnd.youtube:$safeVideoId")
         }
         try {
             val appIntent = Intent(Intent.ACTION_VIEW, appUri).apply {
@@ -187,10 +211,12 @@ fun YouTubePlayerDialog(
             }
             context.startActivity(appIntent)
         } catch (_: Exception) {
-            val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(youtubeWatchUrl)).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            runCatching {
+                val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(youtubeWatchUrl)).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(webIntent)
             }
-            context.startActivity(webIntent)
         }
     }
 
@@ -200,6 +226,7 @@ fun YouTubePlayerDialog(
                 webViewRef?.loadUrl("about:blank")
                 webViewRef?.stopLoading()
                 webViewRef?.destroy()
+                webViewRef = null
             } catch (_: Exception) {}
         }
     }
@@ -254,6 +281,8 @@ fun YouTubePlayerDialog(
                                     )
                                     settings.javaScriptEnabled = true
                                     settings.domStorageEnabled = true
+                                    settings.allowFileAccess = false
+                                    settings.allowContentAccess = false
                                     settings.mediaPlaybackRequiresUserGesture = false
                                     settings.loadWithOverviewMode = true
                                     settings.useWideViewPort = true
@@ -268,9 +297,24 @@ fun YouTubePlayerDialog(
                                         override fun onPageFinished(view: WebView?, url: String?) {
                                             isLoading = false
                                         }
+
+                                        override fun shouldOverrideUrlLoading(
+                                            view: WebView?,
+                                            request: WebResourceRequest?
+                                        ): Boolean {
+                                            return !isAllowedYouTubeUrl(request?.url)
+                                        }
                                     }
                                     loadDataWithBaseURL("https://www.youtube.com", embedHtml, "text/html", "UTF-8", null)
                                     webViewRef = this
+                                }
+                            },
+                            onRelease = { view ->
+                                runCatching {
+                                    if (webViewRef === view) webViewRef = null
+                                    view.loadUrl("about:blank")
+                                    view.stopLoading()
+                                    view.destroy()
                                 }
                             },
                             modifier = Modifier.fillMaxSize()
@@ -695,6 +739,8 @@ fun YouTubePlayerDialog(
                                         )
                                         settings.javaScriptEnabled = true
                                         settings.domStorageEnabled = true
+                                        settings.allowFileAccess = false
+                                        settings.allowContentAccess = false
                                         settings.mediaPlaybackRequiresUserGesture = false
                                         settings.loadWithOverviewMode = true
                                         settings.useWideViewPort = true
@@ -709,9 +755,24 @@ fun YouTubePlayerDialog(
                                             override fun onPageFinished(view: WebView?, url: String?) {
                                                 isLoading = false
                                             }
+
+                                            override fun shouldOverrideUrlLoading(
+                                                view: WebView?,
+                                                request: WebResourceRequest?
+                                            ): Boolean {
+                                                return !isAllowedYouTubeUrl(request?.url)
+                                            }
                                         }
                                         loadDataWithBaseURL("https://www.youtube.com", embedHtml, "text/html", "UTF-8", null)
                                         webViewRef = this
+                                    }
+                                },
+                                onRelease = { view ->
+                                    runCatching {
+                                        if (webViewRef === view) webViewRef = null
+                                        view.loadUrl("about:blank")
+                                        view.stopLoading()
+                                        view.destroy()
                                     }
                                 },
                                 modifier = Modifier.fillMaxSize()

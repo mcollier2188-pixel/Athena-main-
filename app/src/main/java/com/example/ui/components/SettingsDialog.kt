@@ -846,7 +846,7 @@ fun SettingsDialog(
                                         }
                                     },
                                     modifier = Modifier.weight(1f).height(40.dp).testTag("settings_export_csv_button"),
-                                    colors = ButtonDefaults.buttonColors(containerColor = EchoCyan, contentColor = Color.Black),
+                                    colors = ButtonDefaults.buttonColors(containerColor = EchoCyan, contentColor = EchoOnCyan),
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
                                     Icon(Icons.Default.TableChart, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -869,7 +869,10 @@ fun SettingsDialog(
                                         }
                                     },
                                     modifier = Modifier.weight(1f).height(40.dp).testTag("settings_export_txt_button"),
-                                    colors = ButtonDefaults.buttonColors(containerColor = EchoGreen, contentColor = Color.Black),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = EchoGreen,
+                                        contentColor = if (com.example.ui.theme.LocalEchoColors.current.isDark) androidx.compose.ui.graphics.Color.Black else androidx.compose.ui.graphics.Color.White
+                                    ),
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
                                     Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -1035,6 +1038,20 @@ fun SettingsDialog(
                     // ---------------------------------------------------------
                     // SUBSECTION 1: AUTHENTICATION STATUS (EXPANDABLE)
                     // ---------------------------------------------------------
+                    val accountsManager = remember(context) { com.example.auth.ConnectedAccountsManager.getInstance(context) }
+                    val connectedUser by accountsManager.currentUser.collectAsState()
+                    val configuredClientId by accountsManager.oauthClientId.collectAsState()
+                    val authBadgeText = when {
+                        connectedUser?.isGoogleConnected == true -> "VERIFIED"
+                        connectedUser != null -> "LOCAL"
+                        else -> "SIGNED OUT"
+                    }
+                    val authBadgeColor = when {
+                        connectedUser?.isGoogleConnected == true -> EchoGreen
+                        connectedUser != null -> EchoAmber
+                        else -> EchoMuted
+                    }
+
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1071,7 +1088,12 @@ fun SettingsDialog(
                                     }
                                     Column {
                                         Text("Authentication Status", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = EchoText)
-                                        Text("Google Identity & Zero-Trust Session", fontSize = 10.sp, color = EchoMuted)
+                                        Text(
+                                            text = connectedUser?.authSource?.label
+                                                ?: if (configuredClientId.isNotBlank()) "Google Identity Ready" else "Google Identity & Zero-Trust Session",
+                                            fontSize = 10.sp,
+                                            color = EchoMuted
+                                        )
                                     }
                                 }
 
@@ -1080,14 +1102,14 @@ fun SettingsDialog(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Text(
-                                        text = "ACTIVE",
+                                        text = authBadgeText,
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold,
                                         fontFamily = FontFamily.Monospace,
-                                        color = EchoGreen,
+                                        color = authBadgeColor,
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(4.dp))
-                                            .background(EchoGreen.copy(alpha = 0.15f))
+                                            .background(authBadgeColor.copy(alpha = 0.15f))
                                             .padding(horizontal = 6.dp, vertical = 2.dp)
                                     )
                                     Icon(
@@ -1119,7 +1141,12 @@ fun SettingsDialog(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text("Identity Provider", fontSize = 11.sp, color = EchoMuted)
-                                        Text("Google Identity (Credential Manager)", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = EchoText)
+                                        Text(
+                                            text = connectedUser?.authSource?.label ?: "Google Identity (Credential Manager)",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = EchoText
+                                        )
                                     }
 
                                     Row(
@@ -1128,7 +1155,12 @@ fun SettingsDialog(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text("Active Operator", fontSize = 11.sp, color = EchoMuted)
-                                        Text("athena.operator@secure.local", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = EchoCyan)
+                                        Text(
+                                            text = connectedUser?.email ?: "Not signed in",
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = EchoCyan
+                                        )
                                     }
 
                                     Row(
@@ -1147,7 +1179,19 @@ fun SettingsDialog(
                                     ) {
                                         Button(
                                             onClick = {
-                                                Toast.makeText(context, "Google Identity token re-verified and refreshed", Toast.LENGTH_SHORT).show()
+                                                accountsManager.signInWithGoogle(
+                                                    activityContext = context,
+                                                    onSuccess = { user ->
+                                                        Toast.makeText(
+                                                            context,
+                                                            "Authenticated: ${user.email} (${user.authSource.label})",
+                                                            Toast.LENGTH_SHORT
+                                                        ).show()
+                                                    },
+                                                    onError = { err ->
+                                                        Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+                                                    }
+                                                )
                                             },
                                             modifier = Modifier.weight(1f).height(36.dp).testTag("google_auth_reverify_button"),
                                             colors = ButtonDefaults.buttonColors(containerColor = EchoCyan, contentColor = EchoOnCyan),
@@ -1155,7 +1199,11 @@ fun SettingsDialog(
                                         ) {
                                             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
                                             Spacer(Modifier.width(4.dp))
-                                            Text("Re-verify Token", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = if (connectedUser != null) "Re-verify Token" else "Sign In",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
                                         }
 
                                         OutlinedButton(

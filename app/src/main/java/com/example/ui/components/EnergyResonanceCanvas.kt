@@ -57,26 +57,30 @@ import kotlin.math.sqrt
 /**
  * Theoretical debate topic node for Energy Resonance modeling.
  */
-data class ResonanceTopicNode(
+class ResonanceTopicNode(
     val id: String,
     val title: String,
     val field: String,
     val speaker: CouncilAvatarProfile,
-    var frequencyHz: Float,
+    frequencyHz: Float,
     val targetFrequencyHz: Float = 42.600f,
-    var relX: Float, // Normalized 0.0f..1.0f
-    var relY: Float, // Normalized 0.0f..1.0f
+    relX: Float, // Normalized 0.0f..1.0f
+    relY: Float, // Normalized 0.0f..1.0f
     val hypothesisSnippet: String
 ) {
+    var frequencyHz: Float by mutableFloatStateOf(frequencyHz)
+    var relX: Float by mutableFloatStateOf(relX)
+    var relY: Float by mutableFloatStateOf(relY)
+
     /**
      * Calculates Q-Factor resonance coupling efficiency to the 42.600 Hz standing wave.
      * Scale 0.0f (complete phase mismatch) to 1.0f (100% harmonic lock).
      */
     val couplingCoherence: Float
         get() {
-            val delta = abs(frequencyHz - targetFrequencyHz)
             val q = 150f
-            val ratio = if (targetFrequencyHz > 0f) frequencyHz / targetFrequencyHz else 1f
+            val safeFreq = frequencyHz.coerceAtLeast(0.001f)
+            val ratio = if (targetFrequencyHz > 0f) safeFreq / targetFrequencyHz else 1f
             val denom = sqrt(1f + (q * (ratio - 1f / ratio)).let { it * it })
             return (1f / denom).coerceIn(0.05f, 1.0f)
         }
@@ -201,6 +205,7 @@ fun EnergyResonanceCanvas(
                 )
             }
     ) {
+        val echoColors = com.example.ui.theme.LocalEchoColors.current
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
@@ -212,7 +217,7 @@ fun EnergyResonanceCanvas(
             for (gx in 0..(w / gridSpacing).toInt()) {
                 val x = gx * gridSpacing
                 drawLine(
-                    color = EchoCardStroke.copy(alpha = 0.35f),
+                    color = echoColors.cardStroke.copy(alpha = 0.35f),
                     start = Offset(x, 0f),
                     end = Offset(x, h),
                     strokeWidth = 0.5f
@@ -221,7 +226,7 @@ fun EnergyResonanceCanvas(
             for (gy in 0..(h / gridSpacing).toInt()) {
                 val y = gy * gridSpacing
                 drawLine(
-                    color = EchoCardStroke.copy(alpha = 0.35f),
+                    color = echoColors.cardStroke.copy(alpha = 0.35f),
                     start = Offset(0f, y),
                     end = Offset(w, y),
                     strokeWidth = 0.5f
@@ -234,8 +239,8 @@ fun EnergyResonanceCanvas(
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        EchoCyan.copy(alpha = 0.35f),
-                        EchoCyan.copy(alpha = 0.12f),
+                        echoColors.cyan.copy(alpha = 0.35f),
+                        echoColors.cyan.copy(alpha = 0.12f),
                         Color.Transparent
                     ),
                     center = Offset(centerX, centerY),
@@ -247,7 +252,7 @@ fun EnergyResonanceCanvas(
 
             // Outer resonance boundary ring
             drawCircle(
-                color = EchoCyan.copy(alpha = 0.55f),
+                color = echoColors.cyan.copy(alpha = 0.55f),
                 radius = coreRadius * 1.6f,
                 center = Offset(centerX, centerY),
                 style = Stroke(width = 1.5f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), phase * 10f))
@@ -255,12 +260,12 @@ fun EnergyResonanceCanvas(
 
             // Core solid emblem
             drawCircle(
-                color = EchoCyan.copy(alpha = 0.2f),
+                color = echoColors.cyan.copy(alpha = 0.2f),
                 radius = coreRadius,
                 center = Offset(centerX, centerY)
             )
             drawCircle(
-                color = EchoCyan,
+                color = echoColors.cyan,
                 radius = coreRadius,
                 center = Offset(centerX, centerY),
                 style = Stroke(width = 2.5f)
@@ -271,11 +276,11 @@ fun EnergyResonanceCanvas(
             val centerSub = "MASTER RES."
             val centerMeasured = textMeasurer.measure(
                 text = centerText,
-                style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold, color = EchoCyan, fontFamily = FontFamily.Monospace)
+                style = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold, color = echoColors.cyan, fontFamily = FontFamily.Monospace)
             )
             val subMeasured = textMeasurer.measure(
                 text = centerSub,
-                style = TextStyle(fontSize = 8.sp, fontWeight = FontWeight.Medium, color = EchoGreen, fontFamily = FontFamily.Monospace)
+                style = TextStyle(fontSize = 8.sp, fontWeight = FontWeight.Medium, color = echoColors.green, fontFamily = FontFamily.Monospace)
             )
             drawText(
                 textLayoutResult = centerMeasured,
@@ -294,41 +299,43 @@ fun EnergyResonanceCanvas(
                 val isLocked = abs(node.frequencyHz - 42.600f) <= 0.25f
 
                 // Draw sinusoidal wave path from Center to Node
-                val wavePath = Path()
-                wavePath.moveTo(centerX, centerY)
-
-                val steps = 30
                 val dx = nx - centerX
                 val dy = ny - centerY
                 val dist = hypot(dx, dy)
-                val perpX = -dy / dist
-                val perpY = dx / dist
+                if (dist >= 1e-4f) {
+                    val wavePath = Path()
+                    wavePath.moveTo(centerX, centerY)
 
-                val waveAmplitude = (1f - coherence) * 18f + 4f // Higher lock = less turbulent amplitude
-                val waveFreq = 3f + (node.frequencyHz / 15f)
+                    val steps = 30
+                    val perpX = -dy / dist
+                    val perpY = dx / dist
 
-                for (s in 1..steps) {
-                    val progress = s.toFloat() / steps.toFloat()
-                    val px = centerX + dx * progress
-                    val py = centerY + dy * progress
-                    val waveOffset = sin(progress * Math.PI.toFloat() * waveFreq + phase) * waveAmplitude * sin(progress * Math.PI.toFloat())
-                    val wx = px + perpX * waveOffset
-                    val wy = py + perpY * waveOffset
-                    wavePath.lineTo(wx, wy)
+                    val waveAmplitude = (1f - coherence) * 18f + 4f // Higher lock = less turbulent amplitude
+                    val waveFreq = 3f + (node.frequencyHz / 15f)
+
+                    for (s in 1..steps) {
+                        val progress = s.toFloat() / steps.toFloat()
+                        val px = centerX + dx * progress
+                        val py = centerY + dy * progress
+                        val waveOffset = sin(progress * Math.PI.toFloat() * waveFreq + phase) * waveAmplitude * sin(progress * Math.PI.toFloat())
+                        val wx = px + perpX * waveOffset
+                        val wy = py + perpY * waveOffset
+                        wavePath.lineTo(wx, wy)
+                    }
+
+                    // Line stroke color based on coherence
+                    val lineColor = when {
+                        isLocked -> echoColors.amber.copy(alpha = 0.85f)
+                        coherence > 0.6f -> echoColors.green.copy(alpha = 0.70f)
+                        else -> echoColors.cyan.copy(alpha = 0.40f)
+                    }
+
+                    drawPath(
+                        path = wavePath,
+                        color = lineColor,
+                        style = Stroke(width = if (isLocked) 2.5f else 1.5f)
+                    )
                 }
-
-                // Line stroke color based on coherence
-                val lineColor = when {
-                    isLocked -> EchoAmber.copy(alpha = 0.85f)
-                    coherence > 0.6f -> EchoGreen.copy(alpha = 0.70f)
-                    else -> EchoCyan.copy(alpha = 0.40f)
-                }
-
-                drawPath(
-                    path = wavePath,
-                    color = lineColor,
-                    style = Stroke(width = if (isLocked) 2.5f else 1.5f)
-                )
 
                 // 4. Render Topic Node
                 val nodeRadius = 26f
@@ -336,7 +343,7 @@ fun EnergyResonanceCanvas(
 
                 // Radial Spectral Glow around node
                 if (isLocked || isSelected) {
-                    val glowColor = if (isLocked) EchoAmber else node.speaker.primaryColor
+                    val glowColor = if (isLocked) echoColors.amber else node.speaker.primaryColor
                     drawCircle(
                         brush = Brush.radialGradient(
                             colors = listOf(glowColor.copy(alpha = 0.45f), Color.Transparent),
@@ -355,7 +362,7 @@ fun EnergyResonanceCanvas(
                     center = Offset(nx, ny)
                 )
                 drawCircle(
-                    color = if (isSelected) Color.White else node.speaker.primaryColor,
+                    color = if (isSelected) (if (echoColors.isDark) Color.White else echoColors.text) else node.speaker.primaryColor,
                     radius = nodeRadius,
                     center = Offset(nx, ny),
                     style = Stroke(width = if (isSelected) 2.8f else 1.8f)
@@ -368,7 +375,7 @@ fun EnergyResonanceCanvas(
                     style = TextStyle(
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (isLocked) EchoAmber else EchoText,
+                        color = if (isLocked) echoColors.amber else echoColors.text,
                         fontFamily = FontFamily.Monospace
                     )
                 )
@@ -399,7 +406,7 @@ fun EnergyResonanceCanvas(
                     style = TextStyle(
                         fontSize = 8.sp,
                         fontWeight = FontWeight.Normal,
-                        color = EchoMuted
+                        color = echoColors.muted
                     )
                 )
                 drawText(
@@ -416,7 +423,7 @@ fun EnergyResonanceCanvas(
                     fontSize = 8.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    color = EchoCyan.copy(alpha = 0.8f)
+                    color = echoColors.cyan.copy(alpha = 0.8f)
                 )
             )
             drawText(

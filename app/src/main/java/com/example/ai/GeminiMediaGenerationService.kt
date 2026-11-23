@@ -117,7 +117,7 @@ object GeminiMediaGenerationService {
         }
 
         try {
-            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
+            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
             val promptText = if (targetMedia == "image") {
                 "Act as a master art director. Rewrite this concept into a vivid, descriptive visual prompt for Google Gemini image generation. Include camera lens (e.g. 35mm f/1.4), atmospheric lighting, color palette, and fine textural details. Return only the enhanced prompt without markdown or quotes. Keep under 50 words: $rawPrompt"
             } else {
@@ -140,20 +140,24 @@ object GeminiMediaGenerationService {
 
             val request = Request.Builder()
                 .url(endpoint)
+                .addHeader("x-goog-api-key", apiKey)
                 .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
                 .build()
 
-            val response = httpClient.newCall(request).execute()
-            if (response.isSuccessful) {
-                val jsonStr = response.body?.string() ?: ""
-                val root = JSONObject(jsonStr)
-                val text = root.optJSONArray("candidates")?.optJSONObject(0)
-                    ?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)
-                    ?.optString("text")?.trim()
-                if (!text.isNullOrBlank()) {
-                    return@withContext text
+            httpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val jsonStr = response.body?.string() ?: ""
+                    val root = JSONObject(jsonStr)
+                    val text = root.optJSONArray("candidates")?.optJSONObject(0)
+                        ?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)
+                        ?.optString("text")?.trim()
+                    if (!text.isNullOrBlank()) {
+                        return@withContext text
+                    }
                 }
             }
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Prompt enhance failed: ${e.message}")
         }
@@ -163,7 +167,7 @@ object GeminiMediaGenerationService {
 
     /**
      * Generates an image using Google's gemini-2.5-flash-image API.
-     * Extracts inline base64 image data and writes to local app cache.
+     * Extracts inline base64 image data and writes to persistent app files storage.
      */
     suspend fun generateImage(
         context: Context,
@@ -176,8 +180,7 @@ object GeminiMediaGenerationService {
 
         if (apiKey.isNotBlank()) {
             try {
-                // Gemini 2.5 Flash Image generation endpoint as specified in gemini_api skill
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=$apiKey"
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent"
 
                 val requestJson = JSONObject().apply {
                     put("contents", JSONArray().put(JSONObject().apply {
@@ -194,47 +197,58 @@ object GeminiMediaGenerationService {
 
                 val request = Request.Builder()
                     .url(endpoint)
+                    .addHeader("x-goog-api-key", apiKey)
                     .post(requestJson.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                val response = httpClient.newCall(request).execute()
-                val responseBody = response.body?.string() ?: ""
+                httpClient.newCall(request).execute().use { response ->
+                    val responseBody = response.body?.string() ?: ""
 
-                if (response.isSuccessful && responseBody.isNotBlank()) {
-                    val root = JSONObject(responseBody)
-                    val candidates = root.optJSONArray("candidates")
-                    if (candidates != null && candidates.length() > 0) {
-                        val parts = candidates.getJSONObject(0).optJSONObject("content")?.optJSONArray("parts")
-                        if (parts != null) {
-                            for (i in 0 until parts.length()) {
-                                val part = parts.getJSONObject(i)
-                                val inlineData = part.optJSONObject("inlineData")
-                                if (inlineData != null) {
-                                    val base64Data = inlineData.optString("data")
-                                    if (base64Data.isNotBlank()) {
-                                        val imageBytes = Base64.decode(base64Data, Base64.DEFAULT)
-                                        val cacheDir = File(context.cacheDir, "generated_images").apply { mkdirs() }
-                                        val imageFile = File(cacheDir, "art_${System.currentTimeMillis()}.png")
-                                        FileOutputStream(imageFile).use { it.write(imageBytes) }
+                    if (response.isSuccessful && responseBody.isNotBlank()) {
+                        val root = JSONObject(responseBody)
+                        val candidates = root.optJSONArray("candidates")
+                        if (candidates != null && candidates.length() > 0) {
+                            val parts = candidates.getJSONObject(0).optJSONObject("content")?.optJSONArray("parts")
+                            if (parts != null) {
+                                for (i in 0 until parts.length()) {
+                                    val part = parts.getJSONObject(i)
+                                    val inlineData = part.optJSONObject("inlineData")
+                                    if (inlineData != null) {
+                                        val base64Data = inlineData.optString("data")
+                                        if (base64Data.isNotBlank()) {
+                                            val imageBytes = Base64.decode(base64Data, Base64.DEFAULT)
+                                            val imagesDir = File(context.filesDir, "generated_images").apply { mkdirs() }
+                                            val imageFile = File(imagesDir, "art_${System.currentTimeMillis()}.png")
+                                            FileOutputStream(imageFile).use { it.write(imageBytes) }
+                                            val contentUri = runCatching {
+                                                androidx.core.content.FileProvider.getUriForFile(
+                                                    context,
+                                                    "${context.packageName}.fileprovider",
+                                                    imageFile
+                                                )
+                                            }.getOrElse { Uri.fromFile(imageFile) }
 
-                                        return@withContext Result.success(
-                                            GeneratedImageResult(
-                                                prompt = prompt,
-                                                enhancedPrompt = styledPrompt,
-                                                localUri = Uri.fromFile(imageFile),
-                                                aspectRatio = aspectRatio,
-                                                style = style,
-                                                isOnline = true
+                                            return@withContext Result.success(
+                                                GeneratedImageResult(
+                                                    prompt = prompt,
+                                                    enhancedPrompt = styledPrompt,
+                                                    localUri = contentUri,
+                                                    aspectRatio = aspectRatio,
+                                                    style = style,
+                                                    isOnline = true
+                                                )
                                             )
-                                        )
+                                        }
                                     }
                                 }
                             }
                         }
+                    } else {
+                        Log.w(TAG, "Image API returned status ${response.code}: $responseBody")
                     }
-                } else {
-                    Log.w(TAG, "Image API returned status ${response.code}: $responseBody")
                 }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Direct Gemini Image API invocation failed: ${e.message}")
             }
@@ -275,7 +289,7 @@ object GeminiMediaGenerationService {
         if (apiKey.isNotBlank()) {
             try {
                 // Target Google Imagen 3 API endpoint
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=$apiKey"
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict"
                 val requestJson = JSONObject().apply {
                     put("instances", JSONArray().put(JSONObject().apply {
                         put("prompt", styledPrompt)
@@ -288,44 +302,55 @@ object GeminiMediaGenerationService {
 
                 val request = Request.Builder()
                     .url(endpoint)
+                    .addHeader("x-goog-api-key", apiKey)
                     .post(requestJson.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                val response = httpClient.newCall(request).execute()
-                val responseBody = response.body?.string() ?: ""
+                httpClient.newCall(request).execute().use { response ->
+                    val responseBody = response.body?.string() ?: ""
 
-                if (response.isSuccessful && responseBody.isNotBlank()) {
-                    val root = JSONObject(responseBody)
-                    val predictions = root.optJSONArray("predictions")
-                    if (predictions != null && predictions.length() > 0) {
-                        val results = mutableListOf<GeneratedImageResult>()
-                        val cacheDir = File(context.cacheDir, "generated_images").apply { mkdirs() }
-                        for (i in 0 until predictions.length()) {
-                            val pred = predictions.getJSONObject(i)
-                            val b64 = pred.optString("bytesBase64Encoded").ifEmpty {
-                                pred.optJSONObject("inlineData")?.optString("data") ?: ""
-                            }
-                            if (b64.isNotBlank()) {
-                                val bytes = Base64.decode(b64, Base64.DEFAULT)
-                                val file = File(cacheDir, "imagen_${System.currentTimeMillis()}_$i.png")
-                                FileOutputStream(file).use { it.write(bytes) }
-                                results.add(
-                                    GeneratedImageResult(
-                                        prompt = prompt,
-                                        enhancedPrompt = styledPrompt,
-                                        localUri = Uri.fromFile(file),
-                                        aspectRatio = aspectRatio,
-                                        style = style,
-                                        isOnline = true
+                    if (response.isSuccessful && responseBody.isNotBlank()) {
+                        val root = JSONObject(responseBody)
+                        val predictions = root.optJSONArray("predictions")
+                        if (predictions != null && predictions.length() > 0) {
+                            val results = mutableListOf<GeneratedImageResult>()
+                            val imagesDir = File(context.filesDir, "generated_images").apply { mkdirs() }
+                            for (i in 0 until predictions.length()) {
+                                val pred = predictions.getJSONObject(i)
+                                val b64 = pred.optString("bytesBase64Encoded").ifEmpty {
+                                    pred.optJSONObject("inlineData")?.optString("data") ?: ""
+                                }
+                                if (b64.isNotBlank()) {
+                                    val bytes = Base64.decode(b64, Base64.DEFAULT)
+                                    val file = File(imagesDir, "imagen_${System.currentTimeMillis()}_$i.png")
+                                    FileOutputStream(file).use { it.write(bytes) }
+                                    val contentUri = runCatching {
+                                        androidx.core.content.FileProvider.getUriForFile(
+                                            context,
+                                            "${context.packageName}.fileprovider",
+                                            file
+                                        )
+                                    }.getOrElse { Uri.fromFile(file) }
+                                    results.add(
+                                        GeneratedImageResult(
+                                            prompt = prompt,
+                                            enhancedPrompt = styledPrompt,
+                                            localUri = contentUri,
+                                            aspectRatio = aspectRatio,
+                                            style = style,
+                                            isOnline = true
+                                        )
                                     )
-                                )
+                                }
                             }
-                        }
-                        if (results.isNotEmpty()) {
-                            return@withContext Result.success(results)
+                            if (results.isNotEmpty()) {
+                                return@withContext Result.success(results)
+                            }
                         }
                     }
                 }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Imagen 3 generation failed, trying Gemini 2.5 Flash fallback: ${e.message}")
             }
@@ -377,7 +402,7 @@ object GeminiMediaGenerationService {
         if (apiKey.isNotBlank()) {
             // 1. Dispatch to Veo API as defined in skill
             try {
-                val veoEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-fast-generate-preview:generateVideos?key=$apiKey"
+                val veoEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-fast-generate-preview:generateVideos"
                 val veoRequest = JSONObject().apply {
                     put("prompt", "$prompt. Genre: $genre, Camera: $cameraMovement, $resolution")
                     put("config", JSONObject().apply {
@@ -389,18 +414,22 @@ object GeminiMediaGenerationService {
 
                 val req = Request.Builder()
                     .url(veoEndpoint)
+                    .addHeader("x-goog-api-key", apiKey)
                     .post(veoRequest.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                val resp = httpClient.newCall(req).execute()
-                if (resp.isSuccessful) {
-                    isOnline = true
+                httpClient.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        isOnline = true
+                    }
                 }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Veo API call: ${e.message}")
             }
 
-            // 2. Direct Gemini 3.5 Flash to generate Director Storyboard JSON
+            // 2. Direct Gemini 2.5 Flash to generate Director Storyboard JSON
             try {
                 val storyboardPrompt = """
                     Act as an award-winning cinematic director.
@@ -417,7 +446,7 @@ object GeminiMediaGenerationService {
                     Do not include markdown or backticks. Return valid JSON only.
                 """.trimIndent()
 
-                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
                 val jsonBody = JSONObject().apply {
                     put("contents", JSONArray().put(JSONObject().apply {
                         put("role", "user")
@@ -431,44 +460,48 @@ object GeminiMediaGenerationService {
 
                 val request = Request.Builder()
                     .url(endpoint)
+                    .addHeader("x-goog-api-key", apiKey)
                     .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                val response = httpClient.newCall(request).execute()
-                if (response.isSuccessful) {
-                    val body = response.body?.string() ?: ""
-                    val root = JSONObject(body)
-                    val rawText = root.optJSONArray("candidates")?.optJSONObject(0)
-                        ?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)
-                        ?.optString("text")?.trim() ?: ""
+                httpClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string() ?: ""
+                        val root = JSONObject(body)
+                        val rawText = root.optJSONArray("candidates")?.optJSONObject(0)
+                            ?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)
+                            ?.optString("text")?.trim() ?: ""
 
-                    val cleanJson = rawText
-                        .removePrefix("```json")
-                        .removePrefix("```")
-                        .removeSuffix("```")
-                        .trim()
+                        val cleanJson = rawText
+                            .removePrefix("```json")
+                            .removePrefix("```")
+                            .removeSuffix("```")
+                            .trim()
 
-                    val array = JSONArray(cleanJson)
-                    val parsed = mutableListOf<StoryboardShot>()
-                    for (i in 0 until array.length()) {
-                        val obj = array.getJSONObject(i)
-                        parsed.add(
-                            StoryboardShot(
-                                shotNumber = obj.optInt("shotNumber", i + 1),
-                                title = obj.optString("title", "Shot ${i + 1}"),
-                                durationSec = obj.optInt("durationSec", 5),
-                                cameraMovement = obj.optString("cameraMovement", cameraMovement),
-                                lighting = obj.optString("lighting", "Cinematic contrast"),
-                                visualDescription = obj.optString("visualDescription", "Dynamic scene sequence"),
-                                veoPrompt = obj.optString("veoPrompt", prompt)
+                        val array = JSONArray(cleanJson)
+                        val parsed = mutableListOf<StoryboardShot>()
+                        for (i in 0 until array.length()) {
+                            val obj = array.getJSONObject(i)
+                            parsed.add(
+                                StoryboardShot(
+                                    shotNumber = obj.optInt("shotNumber", i + 1),
+                                    title = obj.optString("title", "Shot ${i + 1}"),
+                                    durationSec = obj.optInt("durationSec", 5),
+                                    cameraMovement = obj.optString("cameraMovement", cameraMovement),
+                                    lighting = obj.optString("lighting", "Cinematic contrast"),
+                                    visualDescription = obj.optString("visualDescription", "Dynamic scene sequence"),
+                                    veoPrompt = obj.optString("veoPrompt", prompt)
+                                )
                             )
-                        )
-                    }
-                    if (parsed.isNotEmpty()) {
-                        shots = parsed
-                        isOnline = true
+                        }
+                        if (parsed.isNotEmpty()) {
+                            shots = parsed
+                            isOnline = true
+                        }
                     }
                 }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Storyboard generation: ${e.message}")
             }
@@ -514,18 +547,15 @@ object GeminiMediaGenerationService {
             )
         )
 
-        // Provide preview video URI from app bundle for instant in-app playback
-        val previewVideoUri = Uri.parse("android.resource://${context.packageName}/raw/sample_sunset")
-
         return@withContext Result.success(
             VeoVideoResult(
                 prompt = prompt,
-                title = prompt.take(30).capitalize().trim(),
+                title = prompt.take(30).replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }.trim(),
                 genre = genre,
                 aspectRatio = aspectRatio,
                 resolution = resolution,
                 shots = finalShots,
-                videoUri = previewVideoUri,
+                videoUri = null,
                 isOnline = isOnline,
                 status = if (isOnline) "Veo 3.1 Fast Generated" else "Director Storyboard Package"
             )
@@ -551,74 +581,80 @@ object GeminiMediaGenerationService {
         }
 
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
+        try {
+            val canvas = Canvas(bitmap)
 
-        // Background Gradient
-        val bgPaint = Paint().apply {
-            shader = LinearGradient(
-                0f, 0f, width.toFloat(), height.toFloat(),
-                intArrayOf(
-                    Color.parseColor("#09101F"),
-                    Color.parseColor("#0F2847"),
-                    Color.parseColor("#1B1A3F"),
-                    Color.parseColor("#003547")
-                ),
-                floatArrayOf(0f, 0.35f, 0.7f, 1f),
-                Shader.TileMode.CLAMP
-            )
+            val bgPaint = Paint().apply {
+                shader = LinearGradient(
+                    0f, 0f, width.toFloat(), height.toFloat(),
+                    intArrayOf(
+                        Color.parseColor("#09101F"),
+                        Color.parseColor("#0F2847"),
+                        Color.parseColor("#1B1A3F"),
+                        Color.parseColor("#003547")
+                    ),
+                    floatArrayOf(0f, 0.35f, 0.7f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
+
+            val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#00E5FF")
+                alpha = 40
+                this.style = Paint.Style.STROKE
+                strokeWidth = 3f
+            }
+            val centerX = width / 2f
+            val centerY = height / 2f
+            canvas.drawCircle(centerX, centerY, (width.coerceAtMost(height) * 0.35f), circlePaint)
+            canvas.drawCircle(centerX, centerY, (width.coerceAtMost(height) * 0.22f), circlePaint)
+
+            val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#7C4DFF")
+                alpha = 70
+            }
+            canvas.drawCircle(centerX, centerY, (width.coerceAtMost(height) * 0.12f), corePaint)
+
+            val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
+                textSize = (width * 0.045f).coerceIn(22f, 38f)
+                textAlign = Paint.Align.CENTER
+                isFakeBoldText = true
+            }
+
+            val cleanPrompt = if (prompt.length > 34) prompt.take(31) + "..." else prompt
+            canvas.drawText(cleanPrompt, centerX, centerY - 20, textPaint)
+
+            val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#00E5FF")
+                textSize = (width * 0.03f).coerceIn(16f, 24f)
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.drawText("✨ $style", centerX, centerY + 25, subPaint)
+
+            val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.parseColor("#9E9E9E")
+                textSize = (width * 0.024f).coerceIn(12f, 18f)
+                textAlign = Paint.Align.CENTER
+            }
+            canvas.drawText("ATHENA AI STUDIO • GEMINI FLASH", centerX, height - 35f, badgePaint)
+
+            val imagesDir = File(context.filesDir, "generated_images").apply { mkdirs() }
+            val file = File(imagesDir, "art_render_${System.currentTimeMillis()}.png")
+            FileOutputStream(file).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+
+            return runCatching {
+                androidx.core.content.FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    file
+                )
+            }.getOrElse { Uri.fromFile(file) }
+        } finally {
+            bitmap.recycle()
         }
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
-
-        // Geometric aesthetic circles & glow
-        val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#00E5FF")
-            alpha = 40
-            this.style = Paint.Style.STROKE
-            strokeWidth = 3f
-        }
-        val centerX = width / 2f
-        val centerY = height / 2f
-        canvas.drawCircle(centerX, centerY, (width.coerceAtMost(height) * 0.35f), circlePaint)
-        canvas.drawCircle(centerX, centerY, (width.coerceAtMost(height) * 0.22f), circlePaint)
-
-        // Accent Core
-        val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#7C4DFF")
-            alpha = 70
-        }
-        canvas.drawCircle(centerX, centerY, (width.coerceAtMost(height) * 0.12f), corePaint)
-
-        // Text Banner
-        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textSize = (width * 0.045f).coerceIn(22f, 38f)
-            textAlign = Paint.Align.CENTER
-            isFakeBoldText = true
-        }
-
-        val cleanPrompt = if (prompt.length > 34) prompt.take(31) + "..." else prompt
-        canvas.drawText(cleanPrompt, centerX, centerY - 20, textPaint)
-
-        val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#00E5FF")
-            textSize = (width * 0.03f).coerceIn(16f, 24f)
-            textAlign = Paint.Align.CENTER
-        }
-        canvas.drawText("✨ $style", centerX, centerY + 25, subPaint)
-
-        val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#9E9E9E")
-            textSize = (width * 0.024f).coerceIn(12f, 18f)
-            textAlign = Paint.Align.CENTER
-        }
-        canvas.drawText("ATHENA AI STUDIO • GEMINI FLASH", centerX, height - 35f, badgePaint)
-
-        val cacheDir = File(context.cacheDir, "generated_images").apply { mkdirs() }
-        val file = File(cacheDir, "art_render_${System.currentTimeMillis()}.png")
-        FileOutputStream(file).use { out ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-        }
-
-        return Uri.fromFile(file)
     }
 }

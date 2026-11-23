@@ -147,27 +147,31 @@ object GoogleGatewayService {
         }
 
         val isOnline = isDeviceOnline(context)
-        val apiKey = try {
-            BuildConfig.GEMINI_API_KEY
-        } catch (e: Exception) {
-            ""
-        }
-        val hasValidApiKey = apiKey.isNotBlank() &&
-                !apiKey.contains("MY_GEMINI_API_KEY") &&
-                !apiKey.contains("PLACEHOLDER")
+        val apiKey = com.example.ai.CreativeHubAiService.resolveEffectiveApiKey()
+        val hasValidApiKey = apiKey.isNotBlank()
 
         // If online and API key present, execute live call
         if (isOnline && hasValidApiKey) {
             try {
-                return@withContext executeLiveGoogleCall(
+                val liveResult = executeLiveGoogleCall(
                     apiKey = apiKey,
                     requester = requester,
                     query = trimmedText,
                     enableSearch = enableGoogleSearch,
                     enableMaps = enableGoogleMaps
                 )
+                if (liveResult.isSuccess) {
+                    return@withContext liveResult
+                }
+                return@withContext GatewayResponse(
+                    rawText = "[GATEWAY FALLBACK]\nLive Google call returned an error: ${liveResult.errorMessage ?: "Unknown API error"}.\n\nOffline air-gap isolation remains intact.",
+                    isSuccess = true,
+                    isOfflineMock = true,
+                    sources = listOf("Google Gateway Offline Sandbox")
+                )
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                // If live call fails (e.g. network timeout or API error), fall back cleanly
                 return@withContext GatewayResponse(
                     rawText = "[GATEWAY FALLBACK]\nLive Google call was interrupted: ${e.localizedMessage ?: "Unknown network error"}.\n\nOffline air-gap isolation remains intact.",
                     isSuccess = true,
@@ -197,8 +201,8 @@ object GoogleGatewayService {
         enableSearch: Boolean,
         enableMaps: Boolean
     ): GatewayResponse = suspendCancellableCoroutine { continuation ->
-        val model = "gemini-3.5-flash"
-        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+        val model = "gemini-2.5-flash"
+        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
 
         val contentsArray = JSONArray().apply {
             put(JSONObject().apply {
@@ -235,6 +239,7 @@ object GoogleGatewayService {
 
         val request = Request.Builder()
             .url(endpoint)
+            .addHeader("x-goog-api-key", apiKey)
             .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
@@ -262,68 +267,92 @@ object GoogleGatewayService {
             }
 
             override fun onResponse(call: Call, response: Response) {
-                try {
-                    val responseBody = response.body?.string().orEmpty()
-                    if (!response.isSuccessful) {
+                response.use { resp ->
+                    try {
+                        val responseBody = resp.body?.string().orEmpty()
+                        if (!resp.isSuccessful) {
+                            if (continuation.isActive) {
+                                continuation.resume(
+                                    GatewayResponse(
+                                        rawText = "",
+                                        isSuccess = false,
+                                        errorMessage = "Google Gateway HTTP Error ${resp.code}: $responseBody"
+                                    )
+                                )
+                            }
+                            return
+                        }
+
+                        val root = JSONObject(responseBody)
+                        val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
+                        val parts = candidate?.optJSONObject("content")?.optJSONArray("parts")
+                        val textBuilder = StringBuilder()
+                        if (parts != null) {
+                            for (i in 0 until parts.length()) {
+                                val part = parts.optJSONObject(i)
+                                if (part != null && !part.optBoolean("thought", false)) {
+                                    textBuilder.append(part.optString("text"))
+                                }
+                            }
+                        }
+                        val answerText = textBuilder.toString().trim()
+
+                        val sources = mutableListOf<String>()
+                        var detectedMapLocation: String? = null
+                        val groundingMetadata = candidate?.optJSONObject("groundingMetadata")
+                        val webSearchQueries = groundingMetadata?.optJSONArray("webSearchQueries")
+                        if (webSearchQueries != null) {
+                            for (i in 0 until webSearchQueries.length()) {
+                                val q = webSearchQueries.optString(i)
+                                if (q.isNotBlank()) sources.add("Search Query: $q")
+                            }
+                        }
+
+                        val groundingChunks = groundingMetadata?.optJSONArray("groundingChunks")
+                        if (groundingChunks != null) {
+                            for (i in 0 until groundingChunks.length()) {
+                                val chunk = groundingChunks.optJSONObject(i)
+                                val web = chunk?.optJSONObject("web")
+                                val uri = web?.optString("uri")
+                                val title = web?.optString("title")
+                                if (!uri.isNullOrBlank()) {
+                                    sources.add(if (!title.isNullOrBlank()) "$title ($uri)" else uri)
+                                }
+                                val maps = chunk?.optJSONObject("maps")
+                                if (maps != null) {
+                                    val mapTitle = maps.optString("title")
+                                    val mapUri = maps.optString("uri")
+                                    if (mapTitle.isNotBlank() && detectedMapLocation == null) {
+                                        detectedMapLocation = mapTitle
+                                    }
+                                    if (mapUri.isNotBlank()) {
+                                        sources.add(if (mapTitle.isNotBlank()) "$mapTitle ($mapUri)" else mapUri)
+                                    }
+                                }
+                            }
+                        }
+
+                        if (continuation.isActive) {
+                            continuation.resume(
+                                GatewayResponse(
+                                    rawText = answerText.ifEmpty { "External response was empty." },
+                                    sources = sources.distinct(),
+                                    mapLocation = detectedMapLocation,
+                                    isSuccess = true,
+                                    isOfflineMock = false
+                                )
+                            )
+                        }
+                    } catch (e: Exception) {
                         if (continuation.isActive) {
                             continuation.resume(
                                 GatewayResponse(
                                     rawText = "",
                                     isSuccess = false,
-                                    errorMessage = "Google Gateway HTTP Error ${response.code}: $responseBody"
+                                    errorMessage = "Failed to parse Google Gateway response: ${e.message}"
                                 )
                             )
                         }
-                        return
-                    }
-
-                    val root = JSONObject(responseBody)
-                    val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
-                    val parts = candidate?.optJSONObject("content")?.optJSONArray("parts")
-                    val answerText = parts?.optJSONObject(0)?.optString("text")?.trim().orEmpty()
-
-                    val sources = mutableListOf<String>()
-                    val groundingMetadata = candidate?.optJSONObject("groundingMetadata")
-                    val webSearchQueries = groundingMetadata?.optJSONArray("webSearchQueries")
-                    if (webSearchQueries != null) {
-                        for (i in 0 until webSearchQueries.length()) {
-                            val q = webSearchQueries.optString(i)
-                            if (q.isNotBlank()) sources.add("Search Query: $q")
-                        }
-                    }
-
-                    val groundingChunks = groundingMetadata?.optJSONArray("groundingChunks")
-                    if (groundingChunks != null) {
-                        for (i in 0 until groundingChunks.length()) {
-                            val chunk = groundingChunks.optJSONObject(i)
-                            val web = chunk?.optJSONObject("web")
-                            val uri = web?.optString("uri")
-                            val title = web?.optString("title")
-                            if (!uri.isNullOrBlank()) {
-                                sources.add(if (!title.isNullOrBlank()) "$title ($uri)" else uri)
-                            }
-                        }
-                    }
-
-                    if (continuation.isActive) {
-                        continuation.resume(
-                            GatewayResponse(
-                                rawText = answerText.ifEmpty { "External response was empty." },
-                                sources = sources.distinct(),
-                                isSuccess = true,
-                                isOfflineMock = false
-                            )
-                        )
-                    }
-                } catch (e: Exception) {
-                    if (continuation.isActive) {
-                        continuation.resume(
-                            GatewayResponse(
-                                rawText = "",
-                                isSuccess = false,
-                                errorMessage = "Failed to parse Google Gateway response: ${e.message}"
-                            )
-                        )
                     }
                 }
             }

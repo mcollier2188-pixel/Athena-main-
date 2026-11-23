@@ -53,6 +53,7 @@ fun OscilloscopeCanvas(
             .clip(RoundedCornerShape(12.dp))
             .background(EchoCard)
     ) {
+        val echoColors = com.example.ui.theme.LocalEchoColors.current
         Canvas(modifier = Modifier.matchParentSize()) {
             val w = size.width
             val h = size.height
@@ -63,7 +64,7 @@ fun OscilloscopeCanvas(
             val gridYStep = h / 4f
             for (i in 0..8) {
                 drawLine(
-                    color = EchoCardStroke.copy(alpha = 0.25f),
+                    color = echoColors.cardStroke.copy(alpha = 0.25f),
                     start = Offset(i * gridXStep, 0f),
                     end = Offset(i * gridXStep, h),
                     strokeWidth = 1f
@@ -71,7 +72,7 @@ fun OscilloscopeCanvas(
             }
             for (j in 0..4) {
                 drawLine(
-                    color = EchoCardStroke.copy(alpha = 0.25f),
+                    color = echoColors.cardStroke.copy(alpha = 0.25f),
                     start = Offset(0f, j * gridYStep),
                     end = Offset(w, j * gridYStep),
                     strokeWidth = 1f
@@ -80,7 +81,7 @@ fun OscilloscopeCanvas(
 
             // Zero baseline
             drawLine(
-                color = EchoCardStroke.copy(alpha = 0.7f),
+                color = echoColors.cardStroke.copy(alpha = 0.7f),
                 start = Offset(0f, centerY),
                 end = Offset(w, centerY),
                 strokeWidth = 1.5f
@@ -118,9 +119,9 @@ fun OscilloscopeCanvas(
                 path = path,
                 brush = Brush.horizontalGradient(
                     colors = listOf(
-                        EchoCyan,
-                        EchoGreen,
-                        EchoCyan
+                        echoColors.cyan,
+                        echoColors.green,
+                        echoColors.cyan
                     )
                 ),
                 style = Stroke(width = 3.5f)

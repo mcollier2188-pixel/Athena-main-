@@ -171,6 +171,11 @@ data class ApkBuildResult(
 )
 
 object AthenaApkBuilderService {
+    private val httpClient = okhttp3.OkHttpClient.Builder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
 
     /**
      * Synthesize and build a complete Android APK package project
@@ -203,6 +208,7 @@ object AthenaApkBuilderService {
             
             // 2. Query AI engine (Gemini or Claude bridge)
             val generatedCodeMap = synthesizeAppCode(
+                context = context,
                 appName = appName,
                 packageName = packageName,
                 description = promptDescription,
@@ -258,6 +264,8 @@ object AthenaApkBuilderService {
                 packageFile = outputApkFile,
                 isSuccess = true
             )
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
         } catch (e: Exception) {
             log("Build Pipeline Error", e.message ?: "Unknown error during build", BuildStatus.FAILED)
             ApkBuildResult(
@@ -282,6 +290,7 @@ object AthenaApkBuilderService {
      * Synthesize application code using Gemini API if available, or rich local expert synthesis
      */
     private suspend fun synthesizeAppCode(
+        context: Context,
         appName: String,
         packageName: String,
         description: String,
@@ -290,15 +299,21 @@ object AthenaApkBuilderService {
         minSdk: Int,
         targetSdk: Int
     ): List<GeneratedSourceFile> {
-        val apiKey = try { BuildConfig.GEMINI_API_KEY } catch (e: Exception) { "" }
-        val canUseGemini = apiKey.isNotBlank() && !apiKey.contains("MY_GEMINI_API_KEY") && !apiKey.contains("PLACEHOLDER")
+        val apiKey = CreativeHubAiService.resolveEffectiveApiKey(context)
+        val canUseGemini = apiKey.isNotBlank()
 
         var aiCustomCode: String? = null
 
         if (canUseGemini && engine != ApkEngine.CLAUDE_ENGINE) {
             try {
-                val modelId = if (engine == ApkEngine.GEMINI_PRO) "gemini-3.1-pro-preview" else "gemini-3.5-flash"
+                val modelId = when (engine.id) {
+                    "gemini-3.1-pro-preview" -> "gemini-2.5-pro"
+                    "gemini-3.5-flash" -> "gemini-2.5-flash"
+                    else -> if (engine == ApkEngine.GEMINI_PRO) "gemini-2.5-pro" else "gemini-2.5-flash"
+                }
                 aiCustomCode = queryGeminiForCode(apiKey, modelId, appName, packageName, description, archetype)
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
             } catch (_: Exception) {
                 aiCustomCode = null
             }
@@ -327,8 +342,7 @@ object AthenaApkBuilderService {
         description: String,
         archetype: AppArchetype
     ): String? = withContext(Dispatchers.IO) {
-        val client = okhttp3.OkHttpClient()
-        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent?key=$apiKey"
+        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent"
 
         val prompt = """
             You are an expert Android Kotlin Jetpack Compose architect.
@@ -359,20 +373,22 @@ object AthenaApkBuilderService {
 
         val request = okhttp3.Request.Builder()
             .url(endpoint)
+            .header("x-goog-api-key", apiKey)
             .post(requestBody)
             .build()
 
-        val response = client.newCall(request).execute()
-        if (response.isSuccessful) {
-            val responseText = response.body?.string() ?: ""
-            val json = JSONObject(responseText)
-            val candidates = json.optJSONArray("candidates")
-            if (candidates != null && candidates.length() > 0) {
-                val content = candidates.getJSONObject(0).optJSONObject("content")
-                val parts = content?.optJSONArray("parts")
-                if (parts != null && parts.length() > 0) {
-                    val code = parts.getJSONObject(0).optString("text")
-                    return@withContext cleanCodeBlock(code)
+        httpClient.newCall(request).execute().use { response ->
+            if (response.isSuccessful) {
+                val responseText = response.body?.string() ?: ""
+                val json = JSONObject(responseText)
+                val candidates = json.optJSONArray("candidates")
+                if (candidates != null && candidates.length() > 0) {
+                    val content = candidates.getJSONObject(0).optJSONObject("content")
+                    val parts = content?.optJSONArray("parts")
+                    if (parts != null && parts.length() > 0) {
+                        val code = parts.getJSONObject(0).optString("text")
+                        return@withContext cleanCodeBlock(code)
+                    }
                 }
             }
         }

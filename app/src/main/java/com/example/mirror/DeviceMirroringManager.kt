@@ -52,9 +52,13 @@ data class MirroringStatus(
  */
 class DeviceMirroringManager private constructor(private val context: Context) {
 
-    private val coroutineScope = CoroutineScope(Dispatchers.IO)
+    private val coroutineScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     private var serverSocket: ServerSocket? = null
     private var serverJob: Job? = null
+    private val clientSemaphore = kotlinx.coroutines.sync.Semaphore(8)
+    private val activeClients = java.util.concurrent.atomic.AtomicInteger(0)
+    @Volatile
+    private var sessionToken: String = ""
 
     private val _status = MutableStateFlow(MirroringStatus())
     val status: StateFlow<MirroringStatus> = _status.asStateFlow()
@@ -161,36 +165,51 @@ class DeviceMirroringManager private constructor(private val context: Context) {
     }
 
     /**
-     * Starts the lightweight local HTTP mirror server on port 8520
+     * Starts the lightweight local HTTP mirror server on port 8520 with a per-session access token.
      */
+    @Synchronized
     fun startLocalMirrorServer(): String {
-        if (_status.value.isServerRunning) {
+        if (_status.value.isServerRunning && serverJob?.isActive == true) {
             return _status.value.serverUrl
         }
 
+        stopLocalMirrorServer()
+
         val ip = getLocalIpAddress()
         val port = 8520
-        val url = "http://$ip:$port"
+        val tokenBytes = ByteArray(6).also { java.security.SecureRandom().nextBytes(it) }
+        val token = tokenBytes.joinToString("") { String.format(Locale.US, "%02x", it) }
+        sessionToken = token
+        val url = "http://$ip:$port/$token"
 
         serverJob = coroutineScope.launch {
             try {
-                serverSocket = ServerSocket(port)
+                val sock = ServerSocket(port)
+                serverSocket = sock
                 _status.value = _status.value.copy(
                     isServerRunning = true,
                     serverUrl = url,
                     localIp = ip,
-                    lastPingTimestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                    lastPingTimestamp = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
                 )
 
-                while (serverSocket != null && !serverSocket!!.isClosed) {
+                while (!sock.isClosed) {
                     val clientSocket = try {
-                        serverSocket?.accept()
+                        sock.accept()
                     } catch (_: Exception) {
                         null
                     } ?: break
 
-                    launch {
-                        handleClient(clientSocket)
+                    if (clientSemaphore.tryAcquire()) {
+                        launch {
+                            try {
+                                handleClient(clientSocket)
+                            } finally {
+                                clientSemaphore.release()
+                            }
+                        }
+                    } else {
+                        runCatching { clientSocket.close() }
                     }
                 }
             } catch (e: Exception) {
@@ -201,6 +220,7 @@ class DeviceMirroringManager private constructor(private val context: Context) {
         return url
     }
 
+    @Synchronized
     fun stopLocalMirrorServer() {
         try {
             serverSocket?.close()
@@ -210,6 +230,7 @@ class DeviceMirroringManager private constructor(private val context: Context) {
         } catch (_: Exception) {
             // ignore
         }
+        activeClients.set(0)
         _status.value = _status.value.copy(
             isServerRunning = false,
             connectedClientsCount = 0
@@ -217,14 +238,24 @@ class DeviceMirroringManager private constructor(private val context: Context) {
     }
 
     private fun handleClient(socket: Socket) {
+        val count = activeClients.incrementAndGet()
         try {
+            socket.soTimeout = 5_000
             val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
             val out = socket.getOutputStream()
             val requestLine = reader.readLine() ?: ""
+            val path = requestLine.split(" ").getOrNull(1).orEmpty()
 
-            val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            if (sessionToken.isNotBlank() && !path.startsWith("/$sessionToken")) {
+                val forbidden = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                out.write(forbidden.toByteArray(Charsets.UTF_8))
+                out.flush()
+                return
+            }
+
+            val timeStr = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
             _status.value = _status.value.copy(
-                connectedClientsCount = (_status.value.connectedClientsCount + 1).coerceAtLeast(1),
+                connectedClientsCount = count.coerceAtLeast(1),
                 lastPingTimestamp = timeStr
             )
 
@@ -240,8 +271,12 @@ class DeviceMirroringManager private constructor(private val context: Context) {
             out.write(responseBytes)
             out.flush()
         } catch (_: Exception) {
-            // client disconnected
+            // client disconnected or timed out
         } finally {
+            val rem = activeClients.decrementAndGet().coerceAtLeast(0)
+            if (_status.value.isServerRunning) {
+                _status.value = _status.value.copy(connectedClientsCount = rem)
+            }
             try {
                 socket.close()
             } catch (_: Exception) {}

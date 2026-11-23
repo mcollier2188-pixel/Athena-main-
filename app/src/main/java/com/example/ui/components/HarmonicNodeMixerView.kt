@@ -227,6 +227,7 @@ fun HarmonicNodeMixerView(
                         .border(1.dp, EchoCardStroke, RoundedCornerShape(10.dp)),
                     contentAlignment = Alignment.Center
                 ) {
+                    val echoColors = com.example.ui.theme.LocalEchoColors.current
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val width = size.width
                         val height = size.height
@@ -234,7 +235,7 @@ fun HarmonicNodeMixerView(
 
                         // Draw baseline
                         drawLine(
-                            color = EchoCyan.copy(alpha = 0.15f),
+                            color = echoColors.cyan.copy(alpha = 0.15f),
                             start = Offset(0f, midY),
                             end = Offset(width, midY),
                             strokeWidth = 1f
@@ -259,7 +260,7 @@ fun HarmonicNodeMixerView(
 
                             drawPath(
                                 path = path,
-                                brush = Brush.horizontalGradient(listOf(EchoCyan, Gold85Hz, EchoGreen)),
+                                brush = Brush.horizontalGradient(listOf(echoColors.cyan, Gold85Hz, echoColors.green)),
                                 style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
                             )
                         }

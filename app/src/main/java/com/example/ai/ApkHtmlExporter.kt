@@ -49,12 +49,32 @@ object ApkHtmlExporter {
         }
     }
 
+    private fun escapeHtml(raw: String): String {
+        return buildString(raw.length) {
+            for (ch in raw) {
+                when (ch) {
+                    '&' -> append("&amp;")
+                    '<' -> append("&lt;")
+                    '>' -> append("&gt;")
+                    '"' -> append("&quot;")
+                    '\'' -> append("&#39;")
+                    else -> append(ch)
+                }
+            }
+        }
+    }
+
+    private fun sanitizeHexColor(raw: String, fallback: String): String {
+        val trimmed = raw.trim()
+        return if (Regex("^#[0-9A-Fa-f]{3,8}$").matches(trimmed)) trimmed else fallback
+    }
+
     private fun generateSingleFileHtml(result: ApkBuildResult, icon: AppIconData): String {
-        val appName = result.appName
-        val archetypeTitle = result.archetype.title
-        val glyph = icon.glyph
-        val bgStart = icon.bgStartHex
-        val bgEnd = icon.bgEndHex
+        val appName = escapeHtml(result.appName)
+        val archetypeTitle = escapeHtml(result.archetype.title)
+        val glyph = escapeHtml(icon.glyph)
+        val bgStart = sanitizeHexColor(icon.bgStartHex, "#00E5FF")
+        val bgEnd = sanitizeHexColor(icon.bgEndHex, "#0F1726")
 
         return """<!DOCTYPE html>
 <html lang="en">
@@ -71,7 +91,7 @@ object ApkHtmlExporter {
       --green: #06D6A0;
       --gold: #FFD166;
       --text: #F1F5F9;
-      --muted: #94A3B8;
+      --muted: #94A3A8;
       --grad-start: $bgStart;
       --grad-end: $bgEnd;
     }
@@ -249,9 +269,9 @@ object ApkHtmlExporter {
     <div class="card">
       <div class="card-title">RUNTIME EVENT LOGS</div>
       <div class="log-box" id="logBox">
-        <div class="log-entry">> [INIT] ${appName} runtime initialized successfully.</div>
-        <div class="log-entry">> [DSP] Waveform buffer synchronized at 44.1 kHz.</div>
-        <div class="log-entry">> [SYSTEM] Ready for interactive testing.</div>
+        <div class="log-entry">&gt; [INIT] ${appName} runtime initialized successfully.</div>
+        <div class="log-entry">&gt; [DSP] Waveform buffer synchronized at 44.1 kHz.</div>
+        <div class="log-entry">&gt; [SYSTEM] Ready for interactive testing.</div>
       </div>
       <button id="triggerPulseBtn" class="btn btn-secondary">
         ⚡ Transmit Harmonic Pulse
@@ -282,7 +302,7 @@ object ApkHtmlExporter {
       const el = document.createElement('div');
       el.className = 'log-entry';
       const time = new Date().toLocaleTimeString();
-      el.textContent = `> [' + time + '] ' + msg;
+      el.textContent = '> [' + time + '] ' + msg;
       logBox.appendChild(el);
       logBox.scrollTop = logBox.scrollHeight;
     }

@@ -148,13 +148,14 @@ fun AppRunnerDialog(
         },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        val runnerBg = if (com.example.ui.theme.LocalEchoColors.current.isDark) Color(0xFF030712) else com.example.ui.theme.EchoBg
         Surface(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF030712))
+                .background(runnerBg)
                 .statusBarsPadding()
                 .testTag("app_runner_dialog"),
-            color = Color(0xFF030712)
+            color = runnerBg
         ) {
             Column(
                 modifier = Modifier
@@ -364,6 +365,7 @@ private fun AcousticArchetypeRunner(toneGenerator: HarmonicToneGenerator) {
                 .border(1.dp, EchoCardStroke, RoundedCornerShape(12.dp))
                 .padding(8.dp)
         ) {
+            val crtColors = com.example.ui.theme.DarkEchoColors
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val w = size.width
                 val h = size.height
@@ -381,7 +383,7 @@ private fun AcousticArchetypeRunner(toneGenerator: HarmonicToneGenerator) {
 
                 drawPath(
                     path = path,
-                    color = if (isPlaying) EchoCyan else EchoMuted,
+                    color = if (isPlaying) crtColors.cyan else crtColors.muted,
                     style = Stroke(width = 2.5f)
                 )
 
@@ -389,7 +391,7 @@ private fun AcousticArchetypeRunner(toneGenerator: HarmonicToneGenerator) {
                 for (i in 1..3) {
                     val nx = (w / 4f) * i
                     drawLine(
-                        color = EchoGreen.copy(alpha = 0.5f),
+                        color = crtColors.green.copy(alpha = 0.5f),
                         start = Offset(nx, 0f),
                         end = Offset(nx, h),
                         strokeWidth = 1f
@@ -1204,13 +1206,14 @@ fun IconStudioDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        val studioBg = if (com.example.ui.theme.LocalEchoColors.current.isDark) Color(0xFF070B14) else com.example.ui.theme.EchoBg
         Surface(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF070B14))
+                .background(studioBg)
                 .statusBarsPadding()
                 .testTag("icon_studio_dialog"),
-            color = Color(0xFF070B14)
+            color = studioBg
         ) {
             Column(
                 modifier = Modifier
@@ -1244,7 +1247,10 @@ fun IconStudioDialog(
                             Toast.makeText(context, "Launcher Icon updated & applied to build bundle!", Toast.LENGTH_SHORT).show()
                             onDismiss()
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = EchoGreen, contentColor = Color.Black)
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = EchoGreen,
+                            contentColor = if (com.example.ui.theme.LocalEchoColors.current.isDark) Color.Black else Color.White
+                        )
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
@@ -1410,13 +1416,14 @@ fun HtmlConfirmDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        val htmlBg = if (com.example.ui.theme.LocalEchoColors.current.isDark) Color(0xFF030712) else com.example.ui.theme.EchoBg
         Surface(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF030712))
+                .background(htmlBg)
                 .statusBarsPadding()
                 .testTag("html_confirm_dialog"),
-            color = Color(0xFF030712)
+            color = htmlBg
         ) {
             Column(
                 modifier = Modifier

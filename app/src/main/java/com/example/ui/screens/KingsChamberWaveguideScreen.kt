@@ -311,6 +311,7 @@ fun KingsChamberWaveguideScreen(
                             .background(Color(0xFF090D14))
                             .border(1.dp, EchoCardStroke, RoundedCornerShape(12.dp))
                     ) {
+                        val crtColors = com.example.ui.theme.DarkEchoColors
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val w = size.width
                             val h = size.height
@@ -343,7 +344,7 @@ fun KingsChamberWaveguideScreen(
 
                             // Descending passage line
                             drawLine(
-                                color = EchoCyan.copy(alpha = 0.4f),
+                                color = crtColors.cyan.copy(alpha = 0.4f),
                                 start = Offset(w * 0.28f, h * 0.62f),
                                 end = Offset(w * 0.50f, h * 0.88f),
                                 strokeWidth = 3.dp.toPx()
@@ -351,7 +352,7 @@ fun KingsChamberWaveguideScreen(
 
                             // Ascending passage line
                             drawLine(
-                                color = EchoCyan.copy(alpha = 0.4f),
+                                color = crtColors.cyan.copy(alpha = 0.4f),
                                 start = Offset(w * 0.35f, h * 0.70f),
                                 end = Offset(w * 0.58f, h * 0.44f),
                                 strokeWidth = 3.5.dp.toPx()
@@ -377,7 +378,7 @@ fun KingsChamberWaveguideScreen(
                             val qx = w * 0.50f
                             val qy = h * 0.62f
                             drawRect(
-                                color = if (selectedNode.id == "queens_chamber") EchoCyan else Color(0xFF37474F),
+                                color = if (selectedNode.id == "queens_chamber") crtColors.cyan else Color(0xFF37474F),
                                 topLeft = Offset(qx - 12.dp.toPx(), qy - 8.dp.toPx()),
                                 size = Size(24.dp.toPx(), 16.dp.toPx())
                             )
@@ -386,7 +387,7 @@ fun KingsChamberWaveguideScreen(
                             val sx = w * 0.50f
                             val sy = h * 0.88f
                             drawRect(
-                                color = if (selectedNode.id == "subterranean_pit") EchoGreen else Color(0xFF263238),
+                                color = if (selectedNode.id == "subterranean_pit") crtColors.green else Color(0xFF263238),
                                 topLeft = Offset(sx - 18.dp.toPx(), sy - 8.dp.toPx()),
                                 size = Size(36.dp.toPx(), 16.dp.toPx())
                             )
@@ -481,6 +482,7 @@ fun KingsChamberWaveguideScreen(
                             .background(Color(0xFF070B12))
                             .border(1.dp, EchoCardStroke, RoundedCornerShape(8.dp))
                     ) {
+                        val crtColors = com.example.ui.theme.DarkEchoColors
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val w = size.width
                             val h = size.height
@@ -517,7 +519,7 @@ fun KingsChamberWaveguideScreen(
                             for (m in 1..harmonicMultiplier) {
                                 val nodeX = (m.toFloat() / (harmonicMultiplier + 1)) * w
                                 drawCircle(
-                                    color = EchoCyan,
+                                    color = crtColors.cyan,
                                     radius = 4.dp.toPx(),
                                     center = Offset(nodeX, midY)
                                 )

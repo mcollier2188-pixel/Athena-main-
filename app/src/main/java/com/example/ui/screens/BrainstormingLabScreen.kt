@@ -3251,13 +3251,14 @@ private fun RoundTablePodiumCard(
                 contentAlignment = Alignment.Center
             ) {
                 // Background Hologram Lines & Central Core
+                val echoColors = com.example.ui.theme.LocalEchoColors.current
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val center = Offset(size.width / 2f, size.height / 2f)
                     val tableRadius = size.height * 0.38f
 
                     // Holographic Table Ring
                     drawCircle(
-                        color = EchoCyan.copy(alpha = 0.15f),
+                        color = echoColors.cyan.copy(alpha = 0.15f),
                         radius = tableRadius,
                         center = center,
                         style = Stroke(width = 2.dp.toPx())
@@ -3265,7 +3266,7 @@ private fun RoundTablePodiumCard(
 
                     // Inner Concentric Pulse Ring
                     drawCircle(
-                        color = (if (isCooking) EchoGreen else EchoCyan).copy(alpha = 0.25f),
+                        color = (if (isCooking) echoColors.green else echoColors.cyan).copy(alpha = 0.25f),
                         radius = tableRadius * 0.6f * pulseScale,
                         center = center,
                         style = Stroke(width = 1.5.dp.toPx())
@@ -3273,13 +3274,13 @@ private fun RoundTablePodiumCard(
 
                     // Crosshair grid lines
                     drawLine(
-                        color = EchoCardStroke.copy(alpha = 0.35f),
+                        color = echoColors.cardStroke.copy(alpha = 0.35f),
                         start = Offset(center.x - tableRadius, center.y),
                         end = Offset(center.x + tableRadius, center.y),
                         strokeWidth = 1.dp.toPx()
                     )
                     drawLine(
-                        color = EchoCardStroke.copy(alpha = 0.35f),
+                        color = echoColors.cardStroke.copy(alpha = 0.35f),
                         start = Offset(center.x, center.y - tableRadius),
                         end = Offset(center.x, center.y + tableRadius),
                         strokeWidth = 1.dp.toPx()

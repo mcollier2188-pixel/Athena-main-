@@ -156,8 +156,13 @@ import com.example.ui.components.SystemSettingsDrawerSheet
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.ui.input.pointer.pointerInput
-import com.example.ui.theme.EchoAmber
+import androidx.compose.ui.platform.LocalConfiguration
+import com.example.data.firestore.FirestoreWorkspaceRepository
+import com.example.launcher.LauncherAppsManager
 import kotlinx.coroutines.launch
 
 enum class MainTab(val index: Int, val title: String) {
@@ -181,11 +186,17 @@ fun MainApp(
     val coroutineScope = rememberCoroutineScope()
     val app = context.applicationContext as Application
 
+    val accountsManager = remember { ConnectedAccountsManager.getInstance(context) }
+    val currentUser by accountsManager.currentUser.collectAsState()
+    val firestoreRepo = remember(context) { FirestoreWorkspaceRepository.createOrNull(context) }
+    val effectiveUserId = currentUserId ?: currentUser?.uid
+
     val workspaceViewModel: WorkspaceViewModel = viewModel(
+        key = "workspace_vm_${effectiveUserId ?: "local"}",
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return WorkspaceViewModel(app, null, null) as T
+                return WorkspaceViewModel(app, firestoreRepo, effectiveUserId) as T
             }
         }
     )
@@ -207,11 +218,18 @@ fun MainApp(
     var showExitConfirmationDialog by remember { mutableStateOf(false) }
     var showAccountSheet by remember { mutableStateOf(false) }
     var showQuickAudioControls by remember { mutableStateOf(false) }
+    var showTopOverflowMenu by remember { mutableStateOf(false) }
     var activeGlobalBrowserUrl by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         val recovery = AthenaUpdateManager.checkAndConsumeUpdateRecovery(context)
         if (recovery != null) {
+            MainTab.entries.firstOrNull {
+                it.name.equals(recovery.lastScreen, ignoreCase = true) ||
+                    it.title.equals(recovery.lastScreen, ignoreCase = true)
+            }?.let { restoredTab ->
+                selectedTab = restoredTab.index
+            }
             android.widget.Toast.makeText(
                 context,
                 "ATHENA Reboot Successful: State restored from update checkpoint (${recovery.updateTitle})",
@@ -223,9 +241,6 @@ fun MainApp(
     var showMirroringDialog by remember { mutableStateOf(false) }
     val orientationManager = remember { OrientationManager.getInstance(context) }
     val currentOrientation by orientationManager.currentOrientation.collectAsState()
-
-    val accountsManager = remember { ConnectedAccountsManager.getInstance(context) }
-    val currentUser by accountsManager.currentUser.collectAsState()
 
     val saveableStateHolder = rememberSaveableStateHolder()
     val visitedTabs = remember { mutableStateListOf(MainTab.ARCHIVE.index) }
@@ -353,21 +368,7 @@ fun MainApp(
                         }
                     },
                 actions = {
-                    // System Update & OTA Recovery Console Trigger
-                    IconButton(
-                        onClick = {
-                            toneGenerator.playChime(SoundEffectType.TAP)
-                            showSystemUpdateConsole = true
-                        },
-                        modifier = Modifier.testTag("top_system_update_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SystemUpdate,
-                            contentDescription = "System Update & Recovery",
-                            tint = EchoAmber,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+                    val isWideTopBar = LocalConfiguration.current.screenWidthDp >= 600
 
                     // Sovereign Android OS Installed App Drawer Trigger
                     IconButton(
@@ -414,91 +415,6 @@ fun MainApp(
                         )
                     }
 
-                    // Quick 90° Screen Rotation Toggle (Landscape Default <-> Portrait)
-                    IconButton(
-                        onClick = {
-                            val next = orientationManager.toggle90Degrees(context as? Activity)
-                            android.widget.Toast.makeText(
-                                context,
-                                "Orientation: ${next.title}",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        },
-                        modifier = Modifier.testTag("top_orientation_toggle_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ScreenRotation,
-                            contentDescription = "Rotate 90 Degrees (${currentOrientation.title})",
-                            tint = if (currentOrientation == AppOrientation.LANDSCAPE) EchoCyan else EchoGreen,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    // Native Device Mirroring & Cast Hub Trigger
-                    IconButton(
-                        onClick = { showMirroringDialog = true },
-                        modifier = Modifier.testTag("top_device_mirroring_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Cast,
-                            contentDescription = "Device Mirroring & Cast",
-                            tint = EchoCyan,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    // Quick Dark / Light Mode Toggle
-                    IconButton(
-                        onClick = onToggleDarkTheme,
-                        modifier = Modifier.testTag("top_theme_toggle_button")
-                    ) {
-                        Icon(
-                            imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
-                            contentDescription = "Toggle Theme",
-                            tint = if (isDarkTheme) EchoCyan else EchoGreen,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    // Google & Connected Accounts Hub Trigger
-                    IconButton(
-                        onClick = { showAccountSheet = true },
-                        modifier = Modifier.testTag("top_account_hub_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AccountCircle,
-                            contentDescription = "Connected Accounts",
-                            tint = if (currentUser != null) EchoGreen else EchoCyan,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    // Lightweight In-App Dola Browser Modal Trigger
-                    IconButton(
-                        onClick = { activeGlobalBrowserUrl = "https://www.google.com" },
-                        modifier = Modifier.testTag("top_browser_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Language,
-                            contentDescription = "Dola Browser",
-                            tint = EchoCyan,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    // Settings Dialog Trigger
-                    IconButton(
-                        onClick = { showSettingsDialog = true },
-                        modifier = Modifier.testTag("top_settings_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = EchoText,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
                     // Quick Audio & Sound Controls Trigger (Master Volume, Button Tap Sounds & Synthesizer)
                     IconButton(
                         onClick = { showQuickAudioControls = true },
@@ -512,19 +428,233 @@ fun MainApp(
                         )
                     }
 
-                    // In-App Custom "Exit App" Button
-                    IconButton(
-                        onClick = { showExitConfirmationDialog = true },
-                        modifier = Modifier
-                            .padding(end = 4.dp)
-                            .testTag("top_exit_app_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PowerSettingsNew,
-                            contentDescription = "Exit App",
-                            tint = EchoRed,
-                            modifier = Modifier.size(22.dp)
-                        )
+                    if (isWideTopBar) {
+                        // System Update & OTA Recovery Console Trigger
+                        IconButton(
+                            onClick = {
+                                toneGenerator.playChime(SoundEffectType.TAP)
+                                showSystemUpdateConsole = true
+                            },
+                            modifier = Modifier.testTag("top_system_update_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SystemUpdate,
+                                contentDescription = "System Update & Recovery",
+                                tint = EchoAmber,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Quick 90° Screen Rotation Toggle (Landscape Default <-> Portrait)
+                        IconButton(
+                            onClick = {
+                                val next = orientationManager.toggle90Degrees(context as? Activity)
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Orientation: ${next.title}",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            },
+                            modifier = Modifier.testTag("top_orientation_toggle_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ScreenRotation,
+                                contentDescription = "Rotate 90 Degrees (${currentOrientation.title})",
+                                tint = if (currentOrientation == AppOrientation.LANDSCAPE) EchoCyan else EchoGreen,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Native Device Mirroring & Cast Hub Trigger
+                        IconButton(
+                            onClick = { showMirroringDialog = true },
+                            modifier = Modifier.testTag("top_device_mirroring_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Cast,
+                                contentDescription = "Device Mirroring & Cast",
+                                tint = EchoCyan,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Quick Dark / Light Mode Toggle
+                        IconButton(
+                            onClick = onToggleDarkTheme,
+                            modifier = Modifier.testTag("top_theme_toggle_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                contentDescription = "Toggle Theme",
+                                tint = if (isDarkTheme) EchoCyan else EchoGreen,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Google & Connected Accounts Hub Trigger
+                        IconButton(
+                            onClick = { showAccountSheet = true },
+                            modifier = Modifier.testTag("top_account_hub_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AccountCircle,
+                                contentDescription = "Connected Accounts",
+                                tint = if (currentUser != null) EchoGreen else EchoCyan,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Lightweight In-App Dola Browser Modal Trigger
+                        IconButton(
+                            onClick = { activeGlobalBrowserUrl = "https://www.google.com" },
+                            modifier = Modifier.testTag("top_browser_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Language,
+                                contentDescription = "Dola Browser",
+                                tint = EchoCyan,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Settings Dialog Trigger
+                        IconButton(
+                            onClick = { showSettingsDialog = true },
+                            modifier = Modifier.testTag("top_settings_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = EchoText,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // In-App Custom "Exit App" Button
+                        IconButton(
+                            onClick = { showExitConfirmationDialog = true },
+                            modifier = Modifier
+                                .padding(end = 4.dp)
+                                .testTag("top_exit_app_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PowerSettingsNew,
+                                contentDescription = "Exit App",
+                                tint = EchoRed,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    } else {
+                        Box {
+                            IconButton(
+                                onClick = { showTopOverflowMenu = true },
+                                modifier = Modifier.testTag("top_overflow_menu_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = "More Actions",
+                                    tint = EchoText,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            DropdownMenu(
+                                expanded = showTopOverflowMenu,
+                                onDismissRequest = { showTopOverflowMenu = false },
+                                containerColor = EchoCard
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Dola Browser", color = EchoText) },
+                                    leadingIcon = { Icon(Icons.Default.Language, contentDescription = null, tint = EchoCyan) },
+                                    onClick = {
+                                        showTopOverflowMenu = false
+                                        activeGlobalBrowserUrl = "https://www.google.com"
+                                    },
+                                    modifier = Modifier.testTag("top_browser_button")
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Connected Accounts", color = EchoText) },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.AccountCircle,
+                                            contentDescription = null,
+                                            tint = if (currentUser != null) EchoGreen else EchoCyan
+                                        )
+                                    },
+                                    onClick = {
+                                        showTopOverflowMenu = false
+                                        showAccountSheet = true
+                                    },
+                                    modifier = Modifier.testTag("top_account_hub_button")
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Rotate 90° (${currentOrientation.title})", color = EchoText) },
+                                    leadingIcon = { Icon(Icons.Default.ScreenRotation, contentDescription = null, tint = EchoCyan) },
+                                    onClick = {
+                                        showTopOverflowMenu = false
+                                        val next = orientationManager.toggle90Degrees(context as? Activity)
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "Orientation: ${next.title}",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                    },
+                                    modifier = Modifier.testTag("top_orientation_toggle_button")
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Device Mirroring & Cast", color = EchoText) },
+                                    leadingIcon = { Icon(Icons.Default.Cast, contentDescription = null, tint = EchoCyan) },
+                                    onClick = {
+                                        showTopOverflowMenu = false
+                                        showMirroringDialog = true
+                                    },
+                                    modifier = Modifier.testTag("top_device_mirroring_button")
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (isDarkTheme) "Switch to Light Mode" else "Switch to Dark Mode", color = EchoText) },
+                                    leadingIcon = {
+                                        Icon(
+                                            if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                            contentDescription = null,
+                                            tint = EchoCyan
+                                        )
+                                    },
+                                    onClick = {
+                                        showTopOverflowMenu = false
+                                        onToggleDarkTheme()
+                                    },
+                                    modifier = Modifier.testTag("top_theme_toggle_button")
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("System Update & Recovery", color = EchoText) },
+                                    leadingIcon = { Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = EchoAmber) },
+                                    onClick = {
+                                        showTopOverflowMenu = false
+                                        toneGenerator.playChime(SoundEffectType.TAP)
+                                        showSystemUpdateConsole = true
+                                    },
+                                    modifier = Modifier.testTag("top_system_update_button")
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Settings", color = EchoText) },
+                                    leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null, tint = EchoText) },
+                                    onClick = {
+                                        showTopOverflowMenu = false
+                                        showSettingsDialog = true
+                                    },
+                                    modifier = Modifier.testTag("top_settings_button")
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Exit App", color = EchoRed) },
+                                    leadingIcon = { Icon(Icons.Default.PowerSettingsNew, contentDescription = null, tint = EchoRed) },
+                                    onClick = {
+                                        showTopOverflowMenu = false
+                                        showExitConfirmationDialog = true
+                                    },
+                                    modifier = Modifier.testTag("top_exit_app_button")
+                                )
+                            }
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = EchoBgAlt)
@@ -658,11 +788,17 @@ fun MainApp(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .pointerInput(Unit) {
+                    val edgeBezelPx = 20.dp.toPx()
+                    val triggerDistancePx = 48.dp.toPx()
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val startX = down.position.x
                         val width = size.width
+                        if (startX > edgeBezelPx && startX < (width - edgeBezelPx)) {
+                            return@awaitEachGesture
+                        }
                         var totalDragX = 0f
+                        var totalDragY = 0f
                         var gestureHandled = false
 
                         while (true) {
@@ -671,11 +807,16 @@ fun MainApp(
                             if (!change.pressed) break
 
                             val deltaX = change.position.x - change.previousPosition.x
+                            val deltaY = change.position.y - change.previousPosition.y
                             totalDragX += deltaX
+                            totalDragY += deltaY
 
-                            if (!gestureHandled) {
-                                // Swipe left from right edge (starts near right bezel, drags left): Hides bars
-                                if (startX >= width * 0.80f && totalDragX < -45f) {
+                            val isHorizontalDominant =
+                                kotlin.math.abs(totalDragX) > kotlin.math.abs(totalDragY) * 1.5f
+
+                            if (!gestureHandled && isHorizontalDominant) {
+                                // Swipe left from right edge bezel: Hides bars
+                                if (startX >= width - edgeBezelPx && totalDragX < -triggerDistancePx) {
                                     if (isTopBarVisible || isBottomBarVisible) {
                                         isTopBarVisible = false
                                         isBottomBarVisible = false
@@ -684,8 +825,8 @@ fun MainApp(
                                         gestureHandled = true
                                     }
                                 }
-                                // Swipe right from left edge (starts near left bezel, drags right): Restores bars
-                                else if (startX <= width * 0.20f && totalDragX > 45f) {
+                                // Swipe right from left edge bezel: Restores bars
+                                else if (startX <= edgeBezelPx && totalDragX > triggerDistancePx) {
                                     if (!isTopBarVisible || !isBottomBarVisible) {
                                         isTopBarVisible = true
                                         isBottomBarVisible = true
@@ -798,8 +939,8 @@ fun MainApp(
                 DolaAiDialog(
                     initialText = "",
                     initialMode = DolaAiMode.CHAT,
-                    firestoreRepository = null,
-                    currentUserId = null,
+                    firestoreRepository = firestoreRepo,
+                    currentUserId = effectiveUserId,
                     onSaveAsNewNote = { noteText ->
                         val firstLine = noteText.trim().lines().firstOrNull()?.take(40) ?: "Dola AI Note"
                         workspaceViewModel.createNote(name = firstLine, initialText = noteText)
@@ -897,7 +1038,18 @@ fun MainApp(
                             onClick = {
                                 showExitConfirmationDialog = false
                                 toneGenerator.stop()
-                                (context as? Activity)?.finishAffinity()
+                                val launcherMgr = LauncherAppsManager.getInstance(context)
+                                launcherMgr.checkDefaultLauncherStatus()
+                                if (launcherMgr.isDefaultLauncher.value) {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "ATHENA is set as Default Home Launcher — choose another Home app to exit",
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                    launcherMgr.openDefaultLauncherPrompt(context)
+                                } else {
+                                    (context as? Activity)?.finishAffinity()
+                                }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = EchoRed, contentColor = Color.White),
                             modifier = Modifier.testTag("confirm_exit_app_button")
@@ -946,7 +1098,8 @@ fun MainApp(
             if (showSystemUpdateConsole) {
                 AthenaSystemUpdateConsole(
                     onDismiss = { showSystemUpdateConsole = false },
-                    toneGenerator = toneGenerator
+                    toneGenerator = toneGenerator,
+                    currentScreen = MainTab.entries.firstOrNull { it.index == selectedTab }?.name ?: "ARCHIVE"
                 )
             }
         }

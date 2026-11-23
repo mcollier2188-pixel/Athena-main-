@@ -2,19 +2,21 @@ package com.example.audio
 
 import android.media.AudioAttributes
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioTrack
-import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -36,9 +38,10 @@ enum class SoundEffectType {
 
 /**
  * Real-time Acoustic Sound Synthesis Engine.
- * Streams dynamic 16-bit PCM audio via Android AudioTrack on a dedicated background coroutine.
- * Supports continuous frequency synthesis (pure sine, bedrock harmonic, tectonic pulse),
- * octave multiplication, tidal LFO tremolo, and tactile cybernetic UI sound effects.
+ * Streams dynamic 16-bit PCM stereo audio via Android AudioTrack on a dedicated background coroutine.
+ * Supports continuous polyphonic frequency synthesis (pure sine, bedrock harmonic, tectonic pulse),
+ * true stereo L/R binaural beat separation, octave multiplication, tidal LFO tremolo,
+ * and tactile cybernetic UI sound effects.
  */
 class HarmonicToneGenerator {
     private val tag = "HarmonicToneGenerator"
@@ -69,6 +72,10 @@ class HarmonicToneGenerator {
         private set
 
     @Volatile
+    var isBinauralStereo: Boolean = false
+        private set
+
+    @Volatile
     var octaveMultiplier: Double = 8.0
         private set
 
@@ -93,7 +100,6 @@ class HarmonicToneGenerator {
         private set
 
     private var playbackJob: Job? = null
-    private var activeAudioTrack: AudioTrack? = null
 
     private val sampleRate = 44100
     private val bufferFrames = 1024
@@ -138,8 +144,9 @@ class HarmonicToneGenerator {
         timbre = mode
     }
 
-    fun updateFrequencies(frequencies: List<Double>) {
+    fun updateFrequencies(frequencies: List<Double>, binauralStereo: Boolean = isBinauralStereo) {
         activeFrequencies = if (frequencies.isEmpty()) listOf(42.6) else frequencies
+        isBinauralStereo = binauralStereo
     }
 
     @Synchronized
@@ -147,12 +154,20 @@ class HarmonicToneGenerator {
         frequencies: List<Double> = activeFrequencies,
         mult: Double = octaveMultiplier,
         tidalLfo: Boolean = isTidalLfoEnabled,
-        timbreMode: WaveformTimbre = timbre
+        timbreMode: WaveformTimbre = timbre,
+        binauralStereo: Boolean = false
     ) {
         activeFrequencies = if (frequencies.isEmpty()) listOf(42.6) else frequencies
         octaveMultiplier = mult.coerceAtLeast(0.1)
         isTidalLfoEnabled = tidalLfo
         timbre = timbreMode
+        isBinauralStereo = binauralStereo
+
+        // If already actively streaming, update live @Volatile parameters smoothly without
+        // tearing down and reallocating the native AudioTrack (prevents slider drag clicks/thrashing).
+        if (isPlaying && playbackJob?.isActive == true) {
+            return
+        }
 
         isPlaying = true
         _isPlayingState.value = true
@@ -163,24 +178,39 @@ class HarmonicToneGenerator {
         }
     }
 
+    /**
+     * Starts true stereo binaural beat synthesis (Left channel = [leftHz], Right channel = [rightHz]).
+     */
+    fun startBinaural(
+        leftHz: Double,
+        rightHz: Double,
+        mult: Double = 1.0,
+        timbreMode: WaveformTimbre = WaveformTimbre.PURE_SINE
+    ) {
+        start(
+            frequencies = listOf(leftHz, rightHz),
+            mult = mult,
+            tidalLfo = false,
+            timbreMode = timbreMode,
+            binauralStereo = true
+        )
+    }
+
     @Synchronized
     fun stop() {
         isPlaying = false
         _isPlayingState.value = false
         playbackJob?.cancel()
         playbackJob = null
+    }
 
-        try {
-            activeAudioTrack?.let { track ->
-                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                    track.stop()
-                }
-                track.release()
-            }
-        } catch (e: Throwable) {
-            Log.w(tag, "AudioTrack release notice: ${e.message}")
-        } finally {
-            activeAudioTrack = null
+    /**
+     * Releases all coroutines and audio resources for non-singleton instances.
+     */
+    fun close() {
+        stop()
+        if (this !== SHARED) {
+            coroutineScope.cancel()
         }
     }
 
@@ -190,7 +220,7 @@ class HarmonicToneGenerator {
     fun playChime(effect: SoundEffectType = SoundEffectType.CHIME) {
         if (isMuted) return
         if (effect == SoundEffectType.TAP && !isButtonSoundEnabled) return
-        coroutineScope.launch {
+        coroutineScope.launch(Dispatchers.IO) {
             try {
                 when (effect) {
                     SoundEffectType.TAP -> synthesizeShortTone(frequencyHz = 880.0, durationMs = 35, peakVolume = 0.25f)
@@ -223,7 +253,7 @@ class HarmonicToneGenerator {
      */
     fun playFeedbackTone(frequencyHz: Double, durationMs: Long = 180, peakVolume: Float = 0.4f) {
         if (isMuted) return
-        coroutineScope.launch {
+        coroutineScope.launch(Dispatchers.IO) {
             synthesizeShortTone(frequencyHz = frequencyHz, durationMs = durationMs, peakVolume = peakVolume)
         }
     }
@@ -236,19 +266,13 @@ class HarmonicToneGenerator {
         start(frequencies = listOf(frequencyHz))
     }
 
-    private fun synthesizeShortTone(frequencyHz: Double, durationMs: Long, peakVolume: Float) {
+    private suspend fun synthesizeShortTone(frequencyHz: Double, durationMs: Long, peakVolume: Float) = withContext(Dispatchers.IO) {
+        val totalSamples = (sampleRate * (durationMs / 1000.0)).toInt().coerceAtLeast(128)
+        val bufferSizeBytes = totalSamples * 2
+        val track = createMonoStaticAudioTrack(bufferSizeBytes) ?: return@withContext
+
         try {
-            val totalSamples = (sampleRate * (durationMs / 1000.0)).toInt().coerceAtLeast(128)
-            val minBuf = AudioTrack.getMinBufferSize(
-                sampleRate,
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            )
-            val bufferSize = maxOf(minBuf, totalSamples * 2)
-
-            val track = createAudioTrack(bufferSize) ?: return
             val shortBuffer = ShortArray(totalSamples)
-
             val twoPi = 2.0 * PI
             val effectiveFreq = frequencyHz.coerceIn(20.0, 18000.0)
             val radPerSample = twoPi * effectiveFreq / sampleRate
@@ -257,7 +281,6 @@ class HarmonicToneGenerator {
             val decaySamples = (totalSamples * 0.8).toInt().coerceAtLeast(1)
 
             for (i in 0 until totalSamples) {
-                // Envelope window to prevent audio clicks
                 val envelope = when {
                     i < attackSamples -> i.toFloat() / attackSamples
                     i > (totalSamples - decaySamples) -> {
@@ -270,21 +293,37 @@ class HarmonicToneGenerator {
                 shortBuffer[i] = (sampleValue * 32767.0).toInt().coerceIn(-32768, 32767).toShort()
             }
 
-            track.play()
-            track.write(shortBuffer, 0, totalSamples)
-            // Short delay to let hardware finish playing
-            Thread.sleep(durationMs + 20)
-            track.stop()
-            track.release()
+            val written = track.write(shortBuffer, 0, totalSamples)
+            if (written > 0) {
+                track.play()
+                delay(durationMs + 25)
+            }
         } catch (e: Throwable) {
             Log.d(tag, "Short tone failed: ${e.message}")
+        } finally {
+            runCatching {
+                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    track.stop()
+                }
+            }
+            runCatching { track.release() }
         }
     }
 
-    private fun streamAudioLoop() {
+    private fun evalTimbreWave(phase: Double, mode: WaveformTimbre): Double {
+        return when (mode) {
+            WaveformTimbre.PURE_SINE -> sin(phase)
+            WaveformTimbre.BEDROCK_HARMONIC ->
+                0.60 * sin(phase) + 0.28 * sin(2.0 * phase) + 0.12 * sin(3.0 * phase)
+            WaveformTimbre.TECTONIC_PULSE ->
+                0.70 * sin(phase) + 0.20 * sin(3.0 * phase) + 0.10 * sin(5.0 * phase)
+        }
+    }
+
+    private suspend fun streamAudioLoop() {
         val minBuf = AudioTrack.getMinBufferSize(
             sampleRate,
-            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.CHANNEL_OUT_STEREO,
             AudioFormat.ENCODING_PCM_16BIT
         )
         if (minBuf <= 0) {
@@ -292,108 +331,129 @@ class HarmonicToneGenerator {
             return
         }
 
-        val trackBufferSize = maxOf(minBuf * 2, bufferFrames * 4)
-        val track = createAudioTrack(trackBufferSize) ?: return
-        activeAudioTrack = track
+        val trackBufferSize = maxOf(minBuf * 2, bufferFrames * 8)
+        val track = createStereoStreamAudioTrack(trackBufferSize) ?: return
 
         try {
             track.play()
-        } catch (e: Throwable) {
-            Log.w(tag, "Failed to start AudioTrack: ${e.message}")
-            return
-        }
 
-        val shortBuffer = ShortArray(bufferFrames)
-        var phase = 0.0
-        var lfoPhase = 0.0
-        val twoPi = 2.0 * PI
-
-        var smoothGain = 0.05f
-
-        while (isPlaying && coroutineScope.coroutineContext.isActive) {
-            val mult = octaveMultiplier
-            val offset = hardwareCalibrationOffsetHz
-            val freqs = activeFrequencies
-            val currentTimbre = timbre
-            val isLfo = isTidalLfoEnabled
-            val targetGain = if (isMuted) 0.0f else volume
-
-            // Target master frequency: if multiple, sum or synthesize the primary resonance
-            val baseFreq = if (freqs.isNotEmpty()) freqs[0] else 42.6
-            // Effective audible frequency applying octave multiplier and calibration offset
-            var effectiveFreq = (baseFreq + offset) * mult
-            // Guarantee human-audible spectrum between 20 Hz and 15,000 Hz for device speakers
-            if (effectiveFreq < 20.0) {
-                effectiveFreq = (effectiveFreq * 8.0).coerceAtLeast(30.0)
-            }
-            effectiveFreq = effectiveFreq.coerceIn(20.0, 16000.0)
-
-            val radPerSample = twoPi * effectiveFreq / sampleRate
+            val stereoBuffer = ShortArray(bufferFrames * 2)
+            val monoExportBuffer = ShortArray(bufferFrames)
+            var phases = DoubleArray(8)
+            var lfoPhase = 0.0
+            val twoPi = 2.0 * PI
             val lfoRadPerSample = twoPi * 0.085 / sampleRate // 11.76s slow tidal cycle
+            var smoothGain = 0.05f
 
-            for (i in 0 until bufferFrames) {
-                // Smooth volume interpolation to prevent stepping clicks
-                smoothGain += (targetGain - smoothGain) * 0.005f
+            while (isPlaying && currentCoroutineContext().isActive) {
+                val mult = octaveMultiplier
+                val offset = hardwareCalibrationOffsetHz
+                val freqs = activeFrequencies.ifEmpty { listOf(42.6) }
+                val binaural = isBinauralStereo && freqs.size >= 2
+                val currentTimbre = timbre
+                val isLfo = isTidalLfoEnabled
+                val targetGain = if (isMuted) 0.0f else volume
 
-                // Synthesize selected timbre
-                val rawWave = when (currentTimbre) {
-                    WaveformTimbre.PURE_SINE -> {
-                        sin(phase)
-                    }
-                    WaveformTimbre.BEDROCK_HARMONIC -> {
-                        0.60 * sin(phase) + 0.28 * sin(2.0 * phase) + 0.12 * sin(3.0 * phase)
-                    }
-                    WaveformTimbre.TECTONIC_PULSE -> {
-                        0.70 * sin(phase) + 0.20 * sin(3.0 * phase) + 0.10 * sin(5.0 * phase)
-                    }
+                val partialCount = freqs.size.coerceAtMost(16)
+                if (phases.size < partialCount) {
+                    phases = phases.copyOf(partialCount)
                 }
 
-                // Tidal LFO amplitude tremolo
-                val lfoMultiplier = if (isLfo) {
-                    0.75 + 0.25 * sin(lfoPhase)
-                } else {
-                    1.0
+                val radPerSampleByPartial = DoubleArray(partialCount) { idx ->
+                    val rawHz = (freqs[idx] + offset) * mult
+                    val clampedHz = if (rawHz <= 0.0) 0.0 else rawHz.coerceIn(1.0, 16000.0)
+                    twoPi * clampedHz / sampleRate
+                }
+                val chordNorm = 1.0 / partialCount.coerceAtLeast(1)
+
+                for (i in 0 until bufferFrames) {
+                    smoothGain += (targetGain - smoothGain) * 0.005f
+
+                    val lfoMultiplier = if (isLfo) {
+                        0.75 + 0.25 * sin(lfoPhase)
+                    } else {
+                        1.0
+                    }
+
+                    val leftSample: Double
+                    val rightSample: Double
+
+                    if (binaural) {
+                        val rawL = evalTimbreWave(phases[0], currentTimbre)
+                        val rawR = evalTimbreWave(phases[1], currentTimbre)
+                        phases[0] = (phases[0] + radPerSampleByPartial[0]) % twoPi
+                        phases[1] = (phases[1] + radPerSampleByPartial[1]) % twoPi
+                        leftSample = rawL * lfoMultiplier * smoothGain * 32767.0
+                        rightSample = rawR * lfoMultiplier * smoothGain * 32767.0
+                    } else {
+                        var sum = 0.0
+                        for (p in 0 until partialCount) {
+                            sum += evalTimbreWave(phases[p], currentTimbre)
+                            phases[p] = (phases[p] + radPerSampleByPartial[p]) % twoPi
+                        }
+                        val monoSample = sum * chordNorm * lfoMultiplier * smoothGain * 32767.0
+                        leftSample = monoSample
+                        rightSample = monoSample
+                    }
+
+                    val sL = leftSample.toInt().coerceIn(-32768, 32767).toShort()
+                    val sR = rightSample.toInt().coerceIn(-32768, 32767).toShort()
+                    stereoBuffer[i * 2] = sL
+                    stereoBuffer[i * 2 + 1] = sR
+                    monoExportBuffer[i] = ((sL.toInt() + sR.toInt()) / 2).toShort()
+
+                    lfoPhase = (lfoPhase + lfoRadPerSample) % twoPi
                 }
 
-                val finalSample = rawWave * lfoMultiplier * smoothGain * 32767.0
-                shortBuffer[i] = finalSample.toInt().coerceIn(-32768, 32767).toShort()
-
-                phase = (phase + radPerSample) % twoPi
-                lfoPhase = (lfoPhase + lfoRadPerSample) % twoPi
-            }
-
-            try {
-                val written = track.write(shortBuffer, 0, bufferFrames)
+                val written = track.write(stereoBuffer, 0, stereoBuffer.size)
                 if (written < 0) {
                     Log.w(tag, "AudioTrack write error code: $written")
                     break
                 }
-                WavAudioExporter.feedSamples(shortBuffer, bufferFrames)
-            } catch (e: Throwable) {
-                Log.w(tag, "AudioTrack write exception: ${e.message}")
-                break
+                WavAudioExporter.feedSamples(monoExportBuffer, bufferFrames)
             }
-        }
-
-        try {
-            if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                track.stop()
-            }
-            track.release()
         } catch (e: Throwable) {
-            Log.d(tag, "Track stop/release error: ${e.message}")
+            Log.w(tag, "AudioTrack stream notice: ${e.message}")
         } finally {
-            if (activeAudioTrack === track) {
-                activeAudioTrack = null
+            runCatching {
+                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    track.stop()
+                }
             }
+            runCatching { track.release() }
         }
     }
 
-    private fun createAudioTrack(bufferSizeBytes: Int): AudioTrack? {
+    private fun createStereoStreamAudioTrack(bufferSizeBytes: Int): AudioTrack? {
         return try {
             val attributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build()
+
+            val format = AudioFormat.Builder()
+                .setSampleRate(sampleRate)
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+                .build()
+
+            AudioTrack.Builder()
+                .setAudioAttributes(attributes)
+                .setAudioFormat(format)
+                .setBufferSizeInBytes(bufferSizeBytes)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
+        } catch (e: Throwable) {
+            Log.w(tag, "AudioTrack creation exception: ${e.message}")
+            null
+        }
+    }
+
+    private fun createMonoStaticAudioTrack(bufferSizeBytes: Int): AudioTrack? {
+        return try {
+            val attributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
 
             val format = AudioFormat.Builder()
@@ -406,10 +466,10 @@ class HarmonicToneGenerator {
                 .setAudioAttributes(attributes)
                 .setAudioFormat(format)
                 .setBufferSizeInBytes(bufferSizeBytes)
-                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setTransferMode(AudioTrack.MODE_STATIC)
                 .build()
         } catch (e: Throwable) {
-            Log.w(tag, "AudioTrack creation exception: ${e.message}")
+            Log.w(tag, "Static AudioTrack creation exception: ${e.message}")
             null
         }
     }

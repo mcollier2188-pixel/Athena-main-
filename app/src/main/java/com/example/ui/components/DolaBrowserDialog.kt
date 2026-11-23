@@ -7,8 +7,11 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.net.http.SslError
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.view.ViewGroup
+import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -45,6 +48,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.OpenInNew
@@ -148,6 +152,7 @@ fun DolaBrowserDialog(
     var ttsInstance by remember { mutableStateOf<TextToSpeech?>(null) }
     var isTtsReady by remember { mutableStateOf(false) }
     var isSpeaking by remember { mutableStateOf(false) }
+    var hasSslError by remember { mutableStateOf(false) }
 
     DisposableEffect(context) {
         var tts: TextToSpeech? = null
@@ -156,6 +161,24 @@ fun DolaBrowserDialog(
                 tts?.language = Locale.US
                 tts?.setSpeechRate(1.0f)
                 tts?.setPitch(1.0f)
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {
+                        isSpeaking = true
+                    }
+
+                    override fun onDone(utteranceId: String?) {
+                        isSpeaking = false
+                    }
+
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(utteranceId: String?) {
+                        isSpeaking = false
+                    }
+
+                    override fun onError(utteranceId: String?, errorCode: Int) {
+                        isSpeaking = false
+                    }
+                })
                 ttsInstance = tts
                 isTtsReady = true
             }
@@ -163,6 +186,12 @@ fun DolaBrowserDialog(
         onDispose {
             tts?.stop()
             tts?.shutdown()
+            runCatching {
+                webViewInstance?.stopLoading()
+                webViewInstance?.loadUrl("about:blank")
+                webViewInstance?.destroy()
+                webViewInstance = null
+            }
         }
     }
 
@@ -216,6 +245,8 @@ fun DolaBrowserDialog(
                 if (isAutoDictateEnabled && isTtsReady) {
                     speakText(result.text)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 copilotResponse = "Copilot update: Could not retrieve online insight (${e.localizedMessage})."
             } finally {
@@ -310,6 +341,7 @@ fun DolaBrowserDialog(
                             }
 
                             // Address Pill Display
+                            val isSecureHttps = currentUrl.startsWith("https://", ignoreCase = true) && !hasSslError
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
@@ -325,9 +357,9 @@ fun DolaBrowserDialog(
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     Icon(
-                                        Icons.Default.Lock,
-                                        contentDescription = "Secure",
-                                        tint = EchoGreen,
+                                        imageVector = if (isSecureHttps) Icons.Default.Lock else Icons.Default.LockOpen,
+                                        contentDescription = if (isSecureHttps) "Secure" else "Not Secure",
+                                        tint = if (isSecureHttps) EchoGreen else EchoAmber,
                                         modifier = Modifier.size(11.dp)
                                     )
                                     Text(
@@ -376,8 +408,16 @@ fun DolaBrowserDialog(
                                     onClick = {
                                         toneGenerator.playChime(SoundEffectType.TAP)
                                         try {
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(currentUrl))
-                                            context.startActivity(intent)
+                                            val parsed = Uri.parse(currentUrl)
+                                            val scheme = parsed.scheme?.lowercase(Locale.US)
+                                            if (scheme == "http" || scheme == "https") {
+                                                val intent = Intent(Intent.ACTION_VIEW, parsed).apply {
+                                                    addCategory(Intent.CATEGORY_BROWSABLE)
+                                                    component = null
+                                                    selector = null
+                                                }
+                                                context.startActivity(intent)
+                                            }
                                         } catch (e: Exception) {
                                             Toast.makeText(context, "Unable to launch external browser", Toast.LENGTH_SHORT).show()
                                         }
@@ -431,6 +471,9 @@ fun DolaBrowserDialog(
                             settings.apply {
                                 javaScriptEnabled = true
                                 domStorageEnabled = true
+                                allowFileAccess = false
+                                allowContentAccess = false
+                                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                                 loadWithOverviewMode = true
                                 useWideViewPort = true
                                 builtInZoomControls = true
@@ -442,6 +485,7 @@ fun DolaBrowserDialog(
                                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                     super.onPageStarted(view, url, favicon)
                                     isLoading = true
+                                    hasSslError = false
                                     url?.let { currentUrl = it }
                                     canGoBack = view?.canGoBack() ?: false
                                     canGoForward = view?.canGoForward() ?: false
@@ -456,13 +500,30 @@ fun DolaBrowserDialog(
                                     canGoForward = view?.canGoForward() ?: false
                                 }
 
+                                override fun onReceivedSslError(
+                                    view: WebView?,
+                                    handler: SslErrorHandler?,
+                                    error: SslError?
+                                ) {
+                                    hasSslError = true
+                                    handler?.cancel()
+                                }
+
                                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                                    val reqUrl = request?.url?.toString() ?: return false
-                                    if (reqUrl.startsWith("http://") || reqUrl.startsWith("https://")) {
+                                    val targetUri = request?.url ?: return false
+                                    val scheme = targetUri.scheme?.lowercase(Locale.US) ?: return true
+                                    if (scheme == "http" || scheme == "https") {
                                         return false
                                     }
+                                    if (scheme == "file" || scheme == "content" || scheme == "javascript" || scheme == "data" || scheme == "intent") {
+                                        return true
+                                    }
                                     return try {
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(reqUrl))
+                                        val intent = Intent(Intent.ACTION_VIEW, targetUri).apply {
+                                            addCategory(Intent.CATEGORY_BROWSABLE)
+                                            component = null
+                                            selector = null
+                                        }
                                         context.startActivity(intent)
                                         true
                                     } catch (e: Exception) {
@@ -486,11 +547,24 @@ fun DolaBrowserDialog(
                             }
 
                             webViewInstance = this
-                            loadUrl(initialUrl)
+                            val startScheme = Uri.parse(initialUrl).scheme?.lowercase(Locale.US)
+                            if (startScheme == "http" || startScheme == "https") {
+                                loadUrl(initialUrl)
+                            } else {
+                                loadUrl("about:blank")
+                            }
                         }
                     },
                     update = { view ->
                         webViewInstance = view
+                    },
+                    onRelease = { view ->
+                        runCatching {
+                            if (webViewInstance === view) webViewInstance = null
+                            view.stopLoading()
+                            view.loadUrl("about:blank")
+                            view.destroy()
+                        }
                     }
                 )
 

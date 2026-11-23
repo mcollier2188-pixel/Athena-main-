@@ -180,6 +180,7 @@ fun BedrockWaveVisualizerCanvas(
                 .border(1.5.dp, EchoCardStroke, RoundedCornerShape(16.dp)),
             contentAlignment = Alignment.Center
         ) {
+            val echoColors = com.example.ui.theme.LocalEchoColors.current
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val width = size.width
                 val height = size.height
@@ -191,7 +192,7 @@ fun BedrockWaveVisualizerCanvas(
                 for (i in 1..ringCount) {
                     val ringRadius = maxRadius * (i.toFloat() / ringCount) * (if (isPlaying) pulseScale else 1f)
                     drawCircle(
-                        color = EchoCyan.copy(alpha = (0.06f * (ringCount - i + 1)).coerceIn(0.02f, 0.25f)),
+                        color = echoColors.cyan.copy(alpha = (0.06f * (ringCount - i + 1)).coerceIn(0.02f, 0.25f)),
                         radius = ringRadius,
                         center = center,
                         style = Stroke(width = 1.dp.toPx())
@@ -225,7 +226,7 @@ fun BedrockWaveVisualizerCanvas(
                     // Thicker and brighter when signal is strong
                     val strokeWidth = (1.5f + signalStrength * 3.5f).dp.toPx()
                     val lineAlpha = (0.25f + signalStrength * 0.65f).coerceIn(0.1f, 0.95f)
-                    val lineColor = if (node.baseRatio == 2 || node.baseRatio == 4) Gold85Hz else EchoCyan
+                    val lineColor = if (node.baseRatio == 2 || node.baseRatio == 4) Gold85Hz else echoColors.cyan
 
                     // Draw direct transmission line
                     drawLine(
@@ -264,7 +265,7 @@ fun BedrockWaveVisualizerCanvas(
                 // Lissajous Glowing Aura
                 drawPath(
                     path = lissajousPath,
-                    color = EchoCyan.copy(alpha = 0.35f),
+                    color = echoColors.cyan.copy(alpha = 0.35f),
                     style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round)
                 )
 
@@ -272,7 +273,7 @@ fun BedrockWaveVisualizerCanvas(
                 drawPath(
                     path = lissajousPath,
                     brush = Brush.sweepGradient(
-                        colors = listOf(EchoCyan, Gold85Hz, EchoGreen, EchoCyan),
+                        colors = listOf(echoColors.cyan, Gold85Hz, echoColors.green, echoColors.cyan),
                         center = center
                     ),
                     style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
@@ -287,8 +288,8 @@ fun BedrockWaveVisualizerCanvas(
                     val dotRadius = if (isMaster) 10.dp.toPx() else 6.5.dp.toPx()
                     val dotColor = when {
                         isMaster -> Gold85Hz
-                        isSelected -> EchoGreen
-                        else -> EchoCyan
+                        isSelected -> echoColors.green
+                        else -> echoColors.cyan
                     }
 
                     // Outer pulse ring for master
@@ -303,7 +304,7 @@ fun BedrockWaveVisualizerCanvas(
 
                     // Solid node dot
                     drawCircle(color = dotColor, radius = dotRadius, center = pos)
-                    drawCircle(color = EchoBg, radius = dotRadius * 0.4f, center = pos)
+                    drawCircle(color = echoColors.bg, radius = dotRadius * 0.4f, center = pos)
                 }
             }
 

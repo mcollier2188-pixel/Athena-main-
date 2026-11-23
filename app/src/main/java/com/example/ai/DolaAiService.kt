@@ -28,16 +28,11 @@ object DolaAiService {
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    private const val MODEL_NAME = "gemini-3.5-flash"
+    private const val MODEL_NAME = "gemini-2.5-flash"
     private const val API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_NAME:generateContent"
 
     val isApiKeyConfigured: Boolean
-        get() = try {
-            val key = BuildConfig.GEMINI_API_KEY
-            key.isNotBlank() && !key.contains("MY_GEMINI_API_KEY") && !key.contains("PLACEHOLDER")
-        } catch (e: Exception) {
-            false
-        }
+        get() = CreativeHubAiService.resolveEffectiveApiKey().isNotBlank()
 
     suspend fun executeTask(
         mode: DolaAiMode,
@@ -65,12 +60,10 @@ When in CHAT mode: Answer questions accurately, concisely, and atmospherically w
             DolaAiMode.CHAT -> if (contextPrompt.isNotBlank()) "$contextPrompt\n\nUser Question: $inputText" else inputText
         }
 
-        val apiKey = try { BuildConfig.GEMINI_API_KEY } catch (e: Exception) { "" }
+        val apiKey = CreativeHubAiService.resolveEffectiveApiKey()
 
-        if (apiKey.isNotBlank() && !apiKey.contains("MY_GEMINI_API_KEY") && !apiKey.contains("PLACEHOLDER")) {
+        if (apiKey.isNotBlank()) {
             try {
-                val url = "$API_ENDPOINT?key=$apiKey"
-
                 val jsonBody = JSONObject().apply {
                     put("contents", JSONArray().apply {
                         put(JSONObject().apply {
@@ -96,25 +89,29 @@ When in CHAT mode: Answer questions accurately, concisely, and atmospherically w
                 }
 
                 val request = Request.Builder()
-                    .url(url)
+                    .url(API_ENDPOINT)
+                    .addHeader("x-goog-api-key", apiKey)
                     .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                val response = client.newCall(request).execute()
-                val responseString = response.body?.string() ?: ""
+                client.newCall(request).execute().use { response ->
+                    val responseString = response.body?.string() ?: ""
 
-                if (response.isSuccessful) {
-                    val root = JSONObject(responseString)
-                    val candidates = root.optJSONArray("candidates")
-                    val candidate = candidates?.optJSONObject(0)
-                    val content = candidate?.optJSONObject("content")
-                    val parts = content?.optJSONArray("parts")
-                    val reply = parts?.optJSONObject(0)?.optString("text")
+                    if (response.isSuccessful) {
+                        val root = JSONObject(responseString)
+                        val candidates = root.optJSONArray("candidates")
+                        val candidate = candidates?.optJSONObject(0)
+                        val content = candidate?.optJSONObject("content")
+                        val parts = content?.optJSONArray("parts")
+                        val reply = parts?.optJSONObject(0)?.optString("text")
 
-                    if (!reply.isNullOrBlank()) {
-                        return@withContext Result.success(reply.trim())
+                        if (!reply.isNullOrBlank()) {
+                            return@withContext Result.success(reply.trim())
+                        }
                     }
                 }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Network or API failure, fallback to intelligent offline generator
             }

@@ -2199,6 +2199,7 @@ fun RealTimeWaveformCanvas(
             .background(Color(0xFF070E17))
             .border(1.dp, EchoCardStroke, RoundedCornerShape(12.dp))
     ) {
+        val crtColors = com.example.ui.theme.DarkEchoColors
         Canvas(modifier = Modifier.matchParentSize()) {
             val w = size.width
             val h = size.height
@@ -2212,7 +2213,7 @@ fun RealTimeWaveformCanvas(
 
             for (i in 0..gridXCols) {
                 drawLine(
-                    color = EchoCardStroke.copy(alpha = if (i == gridXCols / 2) 0.5f else 0.2f),
+                    color = crtColors.cardStroke.copy(alpha = if (i == gridXCols / 2) 0.5f else 0.2f),
                     start = Offset(i * xStep, 0f),
                     end = Offset(i * xStep, h),
                     strokeWidth = if (i == gridXCols / 2) 1.2f else 0.8f
@@ -2220,7 +2221,7 @@ fun RealTimeWaveformCanvas(
             }
             for (j in 0..gridYRows) {
                 drawLine(
-                    color = EchoCardStroke.copy(alpha = if (j == gridYRows / 2) 0.6f else 0.2f),
+                    color = crtColors.cardStroke.copy(alpha = if (j == gridYRows / 2) 0.6f else 0.2f),
                     start = Offset(0f, j * yStep),
                     end = Offset(w, j * yStep),
                     strokeWidth = if (j == gridYRows / 2) 1.5f else 0.8f
@@ -2273,20 +2274,20 @@ fun RealTimeWaveformCanvas(
                 val envelopeAlpha = (resonanceCoupling * 0.35f).toFloat()
                 drawPath(
                     path = standingEnvelopeTop,
-                    color = EchoCyan.copy(alpha = envelopeAlpha),
+                    color = crtColors.cyan.copy(alpha = envelopeAlpha),
                     style = Stroke(width = 1f)
                 )
                 drawPath(
                     path = standingEnvelopeBottom,
-                    color = EchoCyan.copy(alpha = envelopeAlpha),
+                    color = crtColors.cyan.copy(alpha = envelopeAlpha),
                     style = Stroke(width = 1f)
                 )
             }
 
             // 4. Draw primary dynamic waveform with gradient
-            val waveColorStart = if (isResonanceLocked) EchoGreen else EchoCyan
-            val waveColorCenter = if (isResonanceLocked) Color(0xFF6EE7B7) else EchoGreen
-            val waveColorEnd = if (isResonanceLocked) EchoGreen else EchoCyan
+            val waveColorStart = if (isResonanceLocked) crtColors.green else crtColors.cyan
+            val waveColorCenter = if (isResonanceLocked) Color(0xFF6EE7B7) else crtColors.green
+            val waveColorEnd = if (isResonanceLocked) crtColors.green else crtColors.cyan
 
             drawPath(
                 path = wavePath,
@@ -2302,7 +2303,7 @@ fun RealTimeWaveformCanvas(
                 for (n in 1..numNodes) {
                     val nx = (n.toFloat() / (numNodes + 1)) * w
                     drawCircle(
-                        color = EchoGreen.copy(alpha = 0.8f),
+                        color = crtColors.green.copy(alpha = 0.8f),
                         radius = 4f,
                         center = Offset(nx, centerY)
                     )

@@ -1091,12 +1091,12 @@ fun AthenaScienceCockpitView(
                 }
             }
         }
+    }
 
-        if (showInternalAppDrawer) {
-            AppDrawerSheet(
-                onDismiss = { showInternalAppDrawer = false },
-                toneGenerator = toneGenerator
-            )
-        }
+    if (showInternalAppDrawer) {
+        AppDrawerSheet(
+            onDismiss = { showInternalAppDrawer = false },
+            toneGenerator = toneGenerator
+        )
     }
 }

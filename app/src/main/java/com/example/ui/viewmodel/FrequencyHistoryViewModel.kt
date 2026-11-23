@@ -164,6 +164,7 @@ class FrequencyHistoryViewModel(application: Application) : AndroidViewModel(app
         format: com.example.util.ExportFormat = _exportFormat.value,
         onComplete: (Boolean, String) -> Unit = { _, _ -> }
     ) {
+        val appContext = context.applicationContext
         viewModelScope.launch {
             _isExporting.value = true
             try {
@@ -174,14 +175,20 @@ class FrequencyHistoryViewModel(application: Application) : AndroidViewModel(app
                     onComplete(false, msg)
                     return@launch
                 }
-                val exportContent = com.example.util.FrequencyCsvExporter.exportHistoricalResonanceData(entries, format)
-                context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                    com.example.util.FrequencyCsvExporter.writeToOutputStream(outputStream, exportContent)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val exportContent = com.example.util.FrequencyCsvExporter.exportHistoricalResonanceData(entries, format)
+                    val out = appContext.contentResolver.openOutputStream(uri)
+                        ?: throw java.io.IOException("Unable to open destination file stream")
+                    out.use { outputStream ->
+                        com.example.util.FrequencyCsvExporter.writeToOutputStream(outputStream, exportContent)
+                    }
                 }
                 val formatLabel = if (format == com.example.util.ExportFormat.CSV) "CSV" else "Text Report"
                 val msg = "Exported ${entries.size} resonance sessions to $formatLabel successfully!"
                 _exportStatusMessage.value = msg
                 onComplete(true, msg)
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val errorMsg = "Failed to export ${format.displayName}: ${e.localizedMessage ?: "Unknown error"}"
                 _exportStatusMessage.value = errorMsg
@@ -201,6 +208,7 @@ class FrequencyHistoryViewModel(application: Application) : AndroidViewModel(app
         onReady: (android.content.Intent) -> Unit,
         onError: (String) -> Unit
     ) {
+        val appContext = context.applicationContext
         viewModelScope.launch {
             _isExporting.value = true
             try {
@@ -209,15 +217,19 @@ class FrequencyHistoryViewModel(application: Application) : AndroidViewModel(app
                     onError("No frequency sessions available to export.")
                     return@launch
                 }
-                val exportContent = com.example.util.FrequencyCsvExporter.exportHistoricalResonanceData(entries, format)
-                val file = com.example.util.FrequencyCsvExporter.createTempExportFile(
-                    context = context,
-                    content = exportContent,
-                    format = format,
-                    filePrefix = "resonance_findings"
-                )
-                val intent = com.example.util.FrequencyCsvExporter.createShareIntent(context, file, format)
+                val intent = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val exportContent = com.example.util.FrequencyCsvExporter.exportHistoricalResonanceData(entries, format)
+                    val file = com.example.util.FrequencyCsvExporter.createTempExportFile(
+                        context = appContext,
+                        content = exportContent,
+                        format = format,
+                        filePrefix = "resonance_findings"
+                    )
+                    com.example.util.FrequencyCsvExporter.createShareIntent(appContext, file, format)
+                }
                 onReady(intent)
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 onError("Failed to share ${format.displayName}: ${e.localizedMessage ?: "Unknown error"}")
             } finally {
@@ -245,6 +257,7 @@ class FrequencyHistoryViewModel(application: Application) : AndroidViewModel(app
         format: com.example.util.ExportFormat = _exportFormat.value,
         onCopied: (Int) -> Unit = {}
     ) {
+        val appContext = context.applicationContext
         viewModelScope.launch {
             try {
                 val entries = repository.getAllHistoryList()
@@ -252,13 +265,17 @@ class FrequencyHistoryViewModel(application: Application) : AndroidViewModel(app
                     _exportStatusMessage.value = "No sessions to copy."
                     return@launch
                 }
-                val content = com.example.util.FrequencyCsvExporter.exportHistoricalResonanceData(entries, format)
+                val content = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.example.util.FrequencyCsvExporter.exportHistoricalResonanceData(entries, format)
+                }
                 val label = if (format == com.example.util.ExportFormat.CSV) "Frequency History CSV" else "Resonance Findings Report"
-                com.example.util.FrequencyCsvExporter.copyToClipboard(context, content, label)
+                com.example.util.FrequencyCsvExporter.copyToClipboard(appContext, content, label)
                 val formatLabel = if (format == com.example.util.ExportFormat.CSV) "CSV" else "Plain Text"
                 val msg = "Copied ${entries.size} frequency records in $formatLabel format to clipboard!"
                 _exportStatusMessage.value = msg
                 onCopied(entries.size)
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _exportStatusMessage.value = "Failed to copy export: ${e.localizedMessage}"
             }

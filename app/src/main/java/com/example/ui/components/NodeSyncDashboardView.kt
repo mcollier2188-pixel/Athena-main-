@@ -48,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.NetworkNode
+import com.example.ui.theme.DarkEchoColors
 import com.example.ui.theme.EchoBg
 import com.example.ui.theme.EchoCard
 import com.example.ui.theme.EchoCardStroke
@@ -72,7 +73,7 @@ data class NodeTelemetryState(
 )
 
 enum class NodeHealth(val label: String, val color: Color) {
-    OPTIMAL("Locked", EchoGreen),
+    OPTIMAL("Locked", DarkEchoColors.green),
     CALIBRATING("Phase Drift", AlertYellow),
     WARNING("Signal Attenuation", AlertRed)
 }
