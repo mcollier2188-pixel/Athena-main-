@@ -1,5 +1,7 @@
 package com.example.model
 
+import android.content.Context
+
 data class FieldDoc(
     val id: String,
     val title: String,
@@ -9,7 +11,21 @@ data class FieldDoc(
 )
 
 object FieldDocRepository {
-    val documents = listOf(
+    fun getDocuments(context: Context? = null): List<FieldDoc> {
+        val masterManualDoc = FieldDoc(
+            id = "master_manual_2_0_prod",
+            title = "ATHENA AI Studio Master Manual v2.0-PROD",
+            icon = "🦉",
+            subtitle = "2026 Continuum · 10-Chapter Operational & Technical Specification",
+            content = MasterManualRepository.getFullManualMarkdown(context)
+        )
+        return listOf(masterManualDoc) + baseDocuments
+    }
+
+    val documents: List<FieldDoc>
+        get() = getDocuments(null)
+
+    private val baseDocuments = listOf(
         FieldDoc(
             id = "doc1",
             title = "ECHO-INTERFACE Schematic v4.1",
